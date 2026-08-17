@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "FallVault 密码助手",
+  "version": "1.0.0",
+  "description": "自动识别 FallVault 中的账号并在网站填充，支持保存新注册的账号",
+  "permissions": ["storage", "activeTab", "scripting", "clipboardWrite"],
+  "host_permissions": ["http://127.0.0.1:6666/*", "http://localhost:6666/*", "<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "FallVault 密码助手",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -27,6 +27,10 @@ test_record.mp4
 assets/*.ico
 assets/*.svg
 
+# Edge/Chrome 自动化配置临时目录
+assets/edge-profile-shot/
+assets/edge-profile-*/
+
 # Editor
 .vscode/*
 !.vscode/extensions.json
