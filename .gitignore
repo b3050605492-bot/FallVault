@@ -23,8 +23,7 @@ src-tauri/gen/schemas/
 *.db-journal
 test_record.mp4
 
-# Icon source (design files - not needed at runtime)
-assets/*.png
+# Icon source (design files)
 assets/*.ico
 assets/*.svg
 
