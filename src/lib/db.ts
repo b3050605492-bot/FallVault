@@ -2,6 +2,7 @@ import Database from '@tauri-apps/plugin-sql';
 import { remove } from '@tauri-apps/plugin-fs';
 import { appDataDir } from '@tauri-apps/api/path';
 import type { Entry, Folder, Tag, PasswordHistory, Attachment } from '@/types';
+import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
 
 let db: Database | null = null;
 
@@ -134,7 +135,24 @@ export async function deleteTag(id: number): Promise<void> {
   await getDb().execute('DELETE FROM tags WHERE id = ?', [id]);
 }
 
-// === Entries ===
+// === 加解密辅助 ===
+// 解密一行 entry 的敏感字段（password/username/notes）
+async function decryptRows(rows: any[]): Promise<any[]> {
+  const key = getMasterKey();
+  // 未解锁但数据库里是明文（旧数据）→ 原样返回；加密数据但未解锁 → 返回空（理论上不会发生，因为未解锁进不了主界面）
+  const out: any[] = [];
+  for (const r of rows) {
+    out.push({
+      ...r,
+      password: await decryptField(key as any, r.password),
+      username: await decryptField(key as any, r.username),
+      notes: await decryptField(key as any, r.notes),
+    });
+  }
+  return out;
+}
+
+// ================ Entries ================
 export async function getEntries(folderId?: number, tagId?: number, search?: string): Promise<Entry[]> {
   let sql = `
     SELECT e.*, GROUP_CONCAT(t.name) as tag_names, GROUP_CONCAT(t.color) as tag_colors,
@@ -166,12 +184,12 @@ export async function getEntries(folderId?: number, tagId?: number, search?: str
 
   sql += ' GROUP BY e.id ORDER BY e.is_favorite DESC, e.updated_at DESC';
 
-  return getDb().select(sql, params);
+  const rows: any[] = await getDb().select(sql, params);
+  return decryptRows(rows);
 }
 
 export async function getFavorites(): Promise<Entry[]> {
-  return getDb().select(`
-    SELECT e.*, GROUP_CONCAT(t.name) as tag_names, GROUP_CONCAT(t.color) as tag_colors,
+  const rows: any[] = await getDb().select(`    SELECT e.*, GROUP_CONCAT(t.name) as tag_names, GROUP_CONCAT(t.color) as tag_colors,
            (SELECT COUNT(*) FROM attachments a WHERE a.entry_id = e.id) as attach_count
     FROM entries e
     LEFT JOIN entry_tags et ON e.id = et.entry_id
@@ -179,12 +197,14 @@ export async function getFavorites(): Promise<Entry[]> {
     WHERE e.is_favorite = 1
     GROUP BY e.id ORDER BY e.updated_at DESC
   `);
+  return decryptRows(rows);
 }
 
 export async function getEntryById(id: number): Promise<Entry | null> {
   const rows: any[] = await getDb().select('SELECT * FROM entries WHERE id = ?', [id]);
-  return (rows[0] as Entry) || null;
-}
+  if (!rows[0]) return null;
+  const decrypted = await decryptRows(rows);
+  return (decrypted[0] as Entry) || null;}
 
 export async function getEntryTags(entryId: number): Promise<number[]> {
   const rows: any[] = await getDb().select('SELECT tag_id FROM entry_tags WHERE entry_id = ?', [entryId]);
@@ -192,15 +212,16 @@ export async function getEntryTags(entryId: number): Promise<number[]> {
 }
 
 export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []): Promise<number> {
+  const key = getMasterKey();
   const result = await getDb().execute(
     `INSERT INTO entries (title, username, password, website, notes, icon, folder_id, is_favorite)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.title || '',
-      entry.username || '',
-      entry.password || '',
+      entry.username ? await encryptField(key as any, entry.username) : '',
+      entry.password ? await encryptField(key as any, entry.password) : '',
       entry.website || '',
-      entry.notes || '',
+      entry.notes ? await encryptField(key as any, entry.notes) : '',
       entry.icon || 'Lock',
       entry.folder_id || null,
       entry.is_favorite ? 1 : 0,
@@ -216,13 +237,15 @@ export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []):
 }
 
 export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: number[]): Promise<void> {
+  const key = getMasterKey();
+
   // Save password history if password changed
   if (entry.password) {
     const old = await getEntryById(id);
     if (old && old.password !== entry.password) {
       await getDb().execute(
         'INSERT INTO password_history (entry_id, old_password) VALUES (?, ?)',
-        [id, old.password]
+        [id, await encryptField(key as any, old.password)]
       );
     }
   }
@@ -233,10 +256,10 @@ export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: nu
      WHERE id = ?`,
     [
       entry.title,
-      entry.username,
-      entry.password,
+      entry.username ? await encryptField(key as any, entry.username) : '',
+      entry.password ? await encryptField(key as any, entry.password) : '',
       entry.website,
-      entry.notes,
+      entry.notes ? await encryptField(key as any, entry.notes) : '',
       entry.icon,
       entry.folder_id,
       entry.is_favorite ? 1 : 0,

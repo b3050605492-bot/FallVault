@@ -1,9 +1,9 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Minus, Square, X, Lock } from 'lucide-react';
+import { Minus, Square, X, Lock, LockKeyhole } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { translate, LangKey } from '@/lib/i18n';
 
-export function TitleBar() {
+export function TitleBar({ onLock }: { onLock?: () => void }) {
   const { settings } = useAppStore();
   const isEn = settings.language === 'en';
   const t = (k: LangKey) => translate(settings.language, k);
@@ -32,6 +32,15 @@ export function TitleBar() {
 
       {/* 窗口控制按钮 */}
       <div className="ml-auto flex items-center h-full" data-tauri-drag-region={false}>
+        {onLock && (
+          <button
+            onClick={onLock}
+            className="w-10 h-full flex items-center justify-center text-[var(--moon-faint)] hover:text-[var(--mint)] hover:bg-[rgba(125,211,192,0.12)] transition-colors"
+            title={isEn ? 'Lock' : '锁定'}
+          >
+            <LockKeyhole size={14} />
+          </button>
+        )}
         <button
           onClick={minimize}
           className="w-10 h-full flex items-center justify-center text-[var(--moon-faint)] hover:text-[var(--moon)] hover:bg-[rgba(192,200,216,0.1)] transition-colors"

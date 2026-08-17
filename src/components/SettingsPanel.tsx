@@ -1,7 +1,8 @@
 import { useAppStore } from '@/stores/appStore';
 import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
-import { X, Palette, Languages, GlassWater, Waves, Sparkles, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw } from 'lucide-react';
+import { X, Palette, Languages, GlassWater, Waves, Sparkles, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock } from 'lucide-react';
+import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { copyFile, readDir, readTextFile } from '@tauri-apps/plugin-fs';
@@ -16,6 +17,11 @@ export function SettingsPanel() {
   const t = (k: LangKey) => translate(settings.language, k);
   const isEn = settings.language === 'en';
   const [uploading, setUploading] = useState(false);
+  const [showPwdModal, setShowPwdModal] = useState(false);
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmPwd, setConfirmPwd] = useState('');
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [showNewPwd, setShowNewPwd] = useState(false);
 
   const setBackground = (type: 'linewaves' | 'particles') => {
     updateSettings({ background: { ...settings.background, type } });
@@ -66,6 +72,44 @@ export function SettingsPanel() {
       addToast(isEn ? 'Import failed' : '导入失败', 'error');
     } finally {
       setUploading(false);
+    }
+  };
+
+  // 修改主密码
+  const handleChangePassword = async () => {
+    if (newPwd.length < 4) {
+      addToast(isEn ? 'Password too short (min 4)' : '主密码至少 4 位', 'warning');
+      return;
+    }
+    if (newPwd !== confirmPwd) {
+      addToast(isEn ? 'Passwords do not match' : '两次输入不一致', 'warning');
+      return;
+    }
+    setPwdLoading(true);
+    try {
+      await changeMasterPassword(newPwd);
+      setShowPwdModal(false);
+      setNewPwd('');
+      setConfirmPwd('');
+      addToast(isEn ? 'Master password updated' : '主密码已更新', 'success');
+    } catch (e) {
+      console.error('change master password failed', e);
+      addToast(isEn ? 'Update failed' : '更新失败', 'error');
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
+  // 锁定应用
+  const handleLock = async () => {
+    try {
+      await lockVault();
+      setIsSettingsOpen(false);
+      // 触发应用锁定：通过 window 事件通知 App
+      window.dispatchEvent(new Event('fallvault:lock'));
+      addToast(isEn ? 'Vault locked' : '已锁定', 'success');
+    } catch (e) {
+      console.error('lock failed', e);
     }
   };
 
@@ -419,8 +463,100 @@ export function SettingsPanel() {
               </button>
             </div>
           </div>
+
+          {/* 安全 */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <ShieldCheck size={15} style={{ color: 'var(--mint)' }} />
+              <h3 className="text-sm font-semibold text-[var(--moon)]">
+                {isEn ? 'Security' : '安全'}
+              </h3>
+            </div>
+            <p className="text-[11px] text-[var(--moon-faint)] mb-2">
+              {isEn
+                ? 'Data is encrypted with AES-256-GCM using your master password'
+                : '数据已用主密码 + AES-256-GCM 加密存储'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowPwdModal(true)}
+                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all flex items-center justify-center gap-1.5"
+              >
+                <ShieldCheck size={13} /> {isEn ? 'Change Password' : '修改主密码'}
+              </button>
+              <button
+                onClick={handleLock}
+                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(212,112,112,0.12)] text-[#D47070] hover:bg-[rgba(212,112,112,0.22)] transition-all flex items-center justify-center gap-1.5"
+              >
+                <Lock size={13} /> {isEn ? 'Lock' : '锁定应用'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* 修改主密码弹窗 */}
+      {showPwdModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-6"
+          style={{ background: 'rgba(8,8,16,0.6)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setShowPwdModal(false)}
+        >
+          <div
+            className="glass-card w-full max-w-sm rounded-3xl p-6"
+            style={{
+              background: 'var(--glass-bg)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              border: '1px solid var(--glass-border, rgba(255,245,245,0.4))',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-base font-semibold text-[var(--moon)]">
+                {isEn ? 'Change Master Password' : '修改主密码'}
+              </h3>
+              <button onClick={() => setShowPwdModal(false)} className="text-[var(--moon-faint)] hover:text-[var(--moon)]">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <input
+                type={showNewPwd ? 'text' : 'password'}
+                value={newPwd}
+                onChange={(e) => setNewPwd(e.target.value)}
+                placeholder={isEn ? 'New master password' : '新主密码（至少 4 位）'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none transition-all focus:border-[var(--mint)] text-[var(--moon)] placeholder:text-[var(--moon-faint)]"
+              />
+              <input
+                type={showNewPwd ? 'text' : 'password'}
+                value={confirmPwd}
+                onChange={(e) => setConfirmPwd(e.target.value)}
+                placeholder={isEn ? 'Confirm new password' : '再次输入新主密码'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none transition-all focus:border-[var(--mint)] text-[var(--moon)] placeholder:text-[var(--moon-faint)]"
+              />
+              <label className="flex items-center gap-1.5 text-xs text-[var(--moon-dim)] cursor-pointer">
+                <input type="checkbox" checked={showNewPwd} onChange={(e) => setShowNewPwd(e.target.checked)} className="accent-[var(--mint)]" />
+                {isEn ? 'Show' : '显示密码'}
+              </label>
+              <button
+                onClick={handleChangePassword}
+                disabled={pwdLoading || !newPwd || !confirmPwd}
+                className="w-full py-2.5 rounded-xl font-semibold text-sm transition-all disabled:opacity-40"
+                style={{ background: 'rgba(125,211,192,0.2)', color: 'var(--mint)' }}
+              >
+                {pwdLoading ? (isEn ? 'Saving...' : '保存中…') : (isEn ? 'Save' : '确认修改')}
+              </button>
+              <p className="text-[11px] text-[var(--moon-faint)] leading-relaxed">
+                {isEn
+                  ? 'Changing the password re-encrypts the key. Existing data stays encrypted.'
+                  : '修改主密码会重新派生密钥，已加密的数据保持不变，无需迁移。'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
