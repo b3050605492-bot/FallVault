@@ -1,13 +1,13 @@
 import { useAppStore } from '@/stores/appStore';
 import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
-import { X, Palette, Languages, GlassWater, Waves, Sparkles, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, Puzzle } from 'lucide-react';
+import { X, Palette, Languages, GlassWater, Waves, Sparkles, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { copyFile, readDir, readTextFile } from '@tauri-apps/plugin-fs';
 import { getBackgroundsDir } from '@/lib/mediaPaths';
 import { useToastStore } from '@/stores/toastStore';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { detectWallpaperFolder, VIDEO_EXTS } from '@/lib/wallpaper';
 
 export function SettingsPanel() {
@@ -16,22 +16,6 @@ export function SettingsPanel() {
   const t = (k: LangKey) => translate(settings.language, k);
   const isEn = settings.language === 'en';
   const [uploading, setUploading] = useState(false);
-  const [bridgeCode, setBridgeCode] = useState('');
-  const [bridgeLoading, setBridgeLoading] = useState(false);
-
-  // 加载浏览器扩展配对码
-  const loadBridgeCode = async () => {
-    setBridgeLoading(true);
-    try {
-      const code = await invoke<string>('get_bridge_token_command');
-      setBridgeCode(code || '');
-    } catch (e) {
-      console.error('load bridge code failed', e);
-      setBridgeCode('');
-    } finally {
-      setBridgeLoading(false);
-    }
-  };
 
   const setBackground = (type: 'linewaves' | 'particles') => {
     updateSettings({ background: { ...settings.background, type } });
@@ -67,31 +51,25 @@ export function SettingsPanel() {
         background: {
           ...settings.background,
           type,
-          source: meta.fullPath,
-          name: meta.title || meta.file,
+          source: meta.file,
+          darkOverlay: type === 'video' ? 0 : settings.background.darkOverlay,
         },
       });
       addToast(
         isEn
-          ? `Imported: ${meta.file} (${type === 'video' ? 'video' : 'image'})`
-          : `已导入：${meta.file}（${type === 'video' ? '视频' : '图片'}）`,
+          ? `Imported: ${meta.file.split(/[\\/]/).pop()} (${type === 'video' ? 'video' : 'image'})`
+          : `已导入: ${meta.file.split(/[\\/]/).pop()} (${type === 'video' ? '视频' : '图片'})`,
         'success'
       );
     } catch (e) {
       console.error('Import folder failed:', e);
-      addToast(isEn ? 'Import failed' : '导入失败，请重试', 'error');
+      addToast(isEn ? 'Import failed' : '导入失败', 'error');
     } finally {
       setUploading(false);
     }
   };
 
-  // 上传单个图片/视频文件
-// 选择自定义数据目录
-// 打开面板时加载配对码
-  useEffect(() => {
-    loadBridgeCode();
-  }, []);
-
+  // 选择自定义数据目录
   const handlePickDataPath = async () => {
     try {
       const dir = await open({ multiple: false, directory: true });
@@ -373,57 +351,6 @@ export function SettingsPanel() {
                 }`}
                 style={settings.language === 'en' ? { backgroundColor: 'var(--mint)', color: '#12121E' } : {}}>
                 English
-              </button>
-            </div>
-          </div>
-
-          {/* 浏览器扩展配对 */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Puzzle size={15} style={{ color: 'var(--mint)' }} />
-              <h3 className="text-sm font-semibold text-[var(--moon)]">
-                {isEn ? 'Browser Extension' : '浏览器扩展'}
-              </h3>
-            </div>
-            <p className="text-[11px] text-[var(--moon-faint)] mb-2">
-              {isEn
-                ? 'Install the FallVault extension in your browser, then enter this code to pair'
-                : '在浏览器安装 FallVault 扩展后，输入下方配对码即可连接自动填充'}
-            </p>
-            <div
-              className="rounded-xl px-4 py-3 text-lg font-mono tracking-widest text-center mb-2 border select-all cursor-pointer"
-              style={{
-                background: 'rgba(18,18,30,0.4)',
-                borderColor: 'rgba(125,211,192,0.3)',
-                color: 'var(--mint)',
-              }}
-              onClick={() => {
-                if (bridgeCode) {
-                  navigator.clipboard.writeText(bridgeCode).then(() =>
-                    addToast(isEn ? 'Pairing code copied' : '配对码已复制', 'success')
-                  );
-                }
-              }}
-              title={isEn ? 'Click to copy' : '点击复制'}
-            >
-              {bridgeLoading ? '...' : (bridgeCode || (isEn ? 'Not loaded' : '未加载'))}
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={loadBridgeCode}
-                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all flex items-center justify-center gap-1.5"
-                disabled={bridgeLoading}
-              >
-                <RotateCcw size={13} /> {isEn ? 'Refresh' : '刷新配对码'}
-              </button>
-              <button
-                onClick={() => navigator.clipboard.writeText(bridgeCode || '').then(() =>
-                  addToast(isEn ? 'Pairing code copied' : '配对码已复制', 'success')
-                )}
-                disabled={!bridgeCode}
-                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all disabled:opacity-40 flex items-center justify-center gap-1.5"
-              >
-                <Puzzle size={13} /> {isEn ? 'Copy' : '复制'}
               </button>
             </div>
           </div>
