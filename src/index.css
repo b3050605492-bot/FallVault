@@ -1,0 +1,350 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  :root {
+    /* 赛博魔法阵配色 - 从Logo提取 */
+    --mint: #7DD3C0;
+    --mint-dim: rgba(210,210,220, 0.15);
+    --crystal: #C0C8D8;
+    --crystal-dim: rgba(192, 200, 216, 0.12);
+    --amethyst: #9B8DB5;
+    --amethyst-dim: rgba(155, 141, 181, 0.2);
+    --void: #12121E;
+    --void-light: #1A1A2E;
+    --void-mid: #1E1E3A;
+    --moon: #E8E8F0;
+    --moon-dim: rgba(232, 232, 240, 0.5);
+    --moon-faint: rgba(232, 232, 240, 0.2);
+    --danger: #D47070;
+    --success: #7DD3C0;
+    --warning: #D4B070;
+
+    /* 毛玻璃透明度（设置面板可调） - 用户指定样式 */
+    --glass-opacity: 0.65;
+    --glass-alpha: 0.2;
+    /* 双层玻璃背景：暗色保护层（保证文字可读）+ 白色半透明层（毛玻璃质感） */
+    --glass-bg: linear-gradient(180deg, rgba(10, 10, 20, 0.28) 0%, rgba(10, 10, 20, 0.16) 100%), rgba(255, 245, 245, var(--glass-alpha));
+    --glass-border: rgba(255, 245, 245, 0.4);
+    --glass-border-hover: rgba(255, 245, 245, 0.6);
+    --glass-blur: 6px;
+    --glass-saturate: 180%;
+    --glass-radius: 20px;
+    --glass-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+  }
+
+  body {
+    overflow: hidden;
+    background: var(--void);
+    font-family: 'Inter', -apple-system, 'Noto Sans SC', sans-serif;
+    color: var(--moon);
+  }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(210,210,220, 0.15);
+    border-radius: 10px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* 赛博魔法阵面板 - 毛玻璃 + 银线边框（用户指定样式） */
+  .rune-panel {
+    background: var(--glass-bg, rgba(255, 245, 245, 0.2));
+    backdrop-filter: blur(var(--glass-blur, 6px)) saturate(var(--glass-saturate, 180%));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 6px)) saturate(var(--glass-saturate, 180%));
+    border: 1px solid var(--glass-border, rgba(255, 245, 245, 0.4));
+    border-radius: var(--glass-radius, 20px);
+    box-shadow: var(--glass-shadow, 0 15px 30px rgba(0, 0, 0, 0.2));
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .rune-panel:hover {
+    border-color: var(--glass-border-hover);
+    box-shadow: var(--glass-shadow, 0 15px 30px rgba(0, 0, 0, 0.2));
+  }
+
+  /* 魔法阵按钮 - 薄荷绿光效 */
+  .rune-btn {
+    background: rgba(210,210,220, 0.08);
+    border: 1px solid rgba(210,210,220, 0.15);
+    border-radius: 12px;
+    color: var(--moon);
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .rune-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, transparent, rgba(210,210,220,0.1), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .rune-btn:hover::before { opacity: 1; }
+  .rune-btn:hover {
+    border-color: rgba(210,210,220, 0.4);
+    box-shadow: 0 0 16px rgba(210,210,220, 0.15);
+    transform: translateY(-1px);
+  }
+  .rune-btn:active { transform: translateY(0); }
+
+  /* 主要行动按钮 */
+  .rune-btn-primary {
+    background: linear-gradient(135deg, rgba(210,210,220,0.2), rgba(210,210,220,0.1));
+    border: 1px solid rgba(210,210,220, 0.3);
+    color: var(--mint);
+    font-weight: 500;
+  }
+  .rune-btn-primary:hover {
+    background: linear-gradient(135deg, rgba(210,210,220,0.3), rgba(210,210,220,0.15));
+    box-shadow: 0 0 24px rgba(210,210,220, 0.2);
+  }
+
+  /* 危险按钮 */
+  .rune-btn-danger {
+    background: rgba(212, 112, 112, 0.08);
+    border: 1px solid rgba(212, 112, 112, 0.2);
+    color: var(--danger);
+  }
+  .rune-btn-danger:hover {
+    background: rgba(212, 112, 112, 0.15);
+    box-shadow: 0 0 16px rgba(212, 112, 112, 0.15);
+  }
+
+  /* 输入框 - 毛玻璃 */
+  .rune-input {
+    background: var(--glass-bg, rgba(255, 245, 245, 0.2));
+    backdrop-filter: blur(var(--glass-blur, 6px)) saturate(var(--glass-saturate, 180%));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 6px)) saturate(var(--glass-saturate, 180%));
+    border: 1px solid var(--glass-border, rgba(255, 245, 245, 0.4));
+    border-radius: 12px;
+    color: var(--moon);
+    transition: all 0.3s ease;
+  }
+  .rune-input:focus {
+    border-color: rgba(210,210,220, 0.4);
+    box-shadow: 0 0 0 3px rgba(210,210,220, 0.1),
+                0 0 20px rgba(210,210,220, 0.05);
+    outline: none;
+  }
+  .rune-input::placeholder { color: var(--moon-faint); }
+
+  /* 悬浮卡片 */
+  .rune-card {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .rune-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(210,210,220, 0.2);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.25),
+                0 0 0 1px rgba(210,210,220,0.08);
+  }
+
+  /* 发光文字 */
+  .glow-mint { text-shadow: 0 0 12px rgba(210,210,220, 0.4); }
+  .glow-crystal { text-shadow: 0 0 8px rgba(192, 200, 216, 0.3); }
+
+  /* 魔法阵线条装饰 */
+  .rune-line {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(210,210,220,0.3), transparent);
+  }
+
+  /* Toast */
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(-20px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: translateY(0) scale(1); }
+    to { opacity: 0; transform: translateY(-20px) scale(0.95); }
+  }
+  .toast-in { animation: toastIn 0.3s ease forwards; }
+  .toast-out { animation: toastOut 0.3s ease forwards; }
+
+  /* 魔法阵旋转装饰 */
+  @keyframes runeSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .rune-spin-slow { animation: runeSpin 60s linear infinite; }
+  .rune-spin { animation: runeSpin 20s linear infinite; }
+
+  /* 脉动发光 */
+  @keyframes pulseGlow {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  .pulse-glow { animation: pulseGlow 3s ease-in-out infinite; }
+
+  /* 侧边栏收起/展开 */
+  @keyframes sidebarCollapse {
+    from { width: 260px; opacity: 1; }
+    to { width: 52px; opacity: 0.85; }
+  }
+  @keyframes sidebarExpand {
+    from { width: 52px; opacity: 0.85; }
+    to { width: 260px; opacity: 1; }
+  }
+
+  /* 粒子浮动 */
+  @keyframes float {
+    0%, 100% { transform: translateY(0) translateX(0); opacity: 0.3; }
+    25% { transform: translateY(-20px) translateX(10px); opacity: 0.6; }
+    50% { transform: translateY(-10px) translateX(-5px); opacity: 0.4; }
+    75% { transform: translateY(-30px) translateX(5px); opacity: 0.5; }
+  }
+
+  /* 渐变波浪漂移动画（纯 CSS，无 WebGL 依赖） */
+  @keyframes waveDrift1 {
+    0% { transform: translate(-50%, -52%) scale(1) rotate(0deg); }
+    100% { transform: translate(-45%, -55%) scale(1.15) rotate(8deg); }
+  }
+  @keyframes waveDrift2 {
+    0% { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(-8%, -10%) scale(1.2); }
+  }
+  @keyframes waveDrift3 {
+    0% { transform: translateX(-3%) scaleY(1); }
+    100% { transform: translateX(3%) scaleY(1.12); }
+  }
+
+  /* 入场动画 */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .fade-up { animation: fadeUp 0.4s ease forwards; }
+
+  /* 光泽扫光 */
+  @keyframes shimmer {
+    from { left: -100%; }
+    to { left: 200%; }
+  }
+
+  /* 磁吸线条容器 */
+  .magnet-lines-container { position: relative; overflow: hidden; }
+
+  /* 线条波浪容器 */
+  .line-waves-container {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .line-waves-container canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    pointer-events: none;
+  }
+
+  /* 粒子容器 */
+  .particles-container {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .particles-container canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    pointer-events: none;
+  }
+
+  /* 金属光泽扫光 */
+  .glare-hover { position: relative; overflow: hidden; }
+
+  /* 高光扫过按钮（SpecularButton 纯 CSS 版） */
+  .specular-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--glass-border, rgba(255, 245, 245, 0.3));
+    border-radius: var(--glass-radius, 20px);
+    background: var(--glass-bg, rgba(255, 245, 245, 0.15));
+    backdrop-filter: blur(var(--glass-blur, 6px)) saturate(var(--glass-saturate, 180%));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 6px)) saturate(var(--glass-saturate, 180%));
+    color: var(--moon, #E8E8F0);
+    font-weight: 500;
+    cursor: pointer;
+    overflow: hidden;
+    transition: transform 0.15s ease, box-shadow 0.3s ease;
+    isolation: isolate;
+  }
+  .specular-btn:hover {
+    box-shadow: 0 0 24px rgba(210,210,220, 0.15), var(--glass-shadow, 0 15px 30px rgba(0,0,0,0.2));
+  }
+  .specular-btn:active { transform: scale(0.97); }
+  .specular-btn:disabled { opacity: 0.55; cursor: default; }
+
+  /* 跟随鼠标的径向高光 */
+  .specular-btn__glow {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    background: radial-gradient(
+      140px circle at var(--fx-x, 50%) var(--fx-y, 50%),
+      rgba(255, 255, 255, 0.28),
+      transparent 65%
+    );
+  }
+  .specular-btn:hover .specular-btn__glow { opacity: 1; }
+
+  /* 斜向扫过的高光（hover 时从左扫到右） */
+  .specular-btn__sweep {
+    position: absolute;
+    top: -50%;
+    bottom: -50%;
+    left: -20%;
+    width: 40%;
+    z-index: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+    transform: skewX(-20deg);
+    opacity: 0;
+  }
+  .specular-btn:hover .specular-btn__sweep {
+    opacity: 1;
+    animation: specularSweep 0.9s ease-in-out;
+  }
+  @keyframes specularSweep {
+    0% { left: -40%; }
+    100% { left: 130%; }
+  }
+
+  .specular-btn__label {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+}

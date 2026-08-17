@@ -1,0 +1,168 @@
+import { create } from 'zustand';
+import type { Entry, Folder, Tag, AppSettings, ThemeDef } from '@/types';
+import { THEMES, applyTheme } from '@/types';
+
+interface AppState {
+  // Data
+  entries: Entry[];
+  folders: Folder[];
+  tags: Tag[];
+  favorites: Entry[];
+  selectedFolderId: number | null;
+  selectedTagId: number | null;
+  searchQuery: string;
+  selectedEntryId: number | null;
+  isLoading: boolean;
+
+  // UI
+  isSidebarOpen: boolean;
+  isEntryModalOpen: boolean;
+  editingEntry: Entry | null;
+  isSettingsOpen: boolean;
+  isPasswordGeneratorOpen: boolean;
+  confirmDialog: {
+    open: boolean;
+    title?: string;
+    message?: string;
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+  };
+
+  // Settings
+  settings: AppSettings;
+  __lastPersist?: number;
+
+  // Actions
+  setEntries: (entries: Entry[]) => void;
+  setFolders: (folders: Folder[]) => void;
+  setTags: (tags: Tag[]) => void;
+  setFavorites: (favorites: Entry[]) => void;
+  setSelectedFolderId: (id: number | null) => void;
+  setSelectedTagId: (id: number | null) => void;
+  setSearchQuery: (query: string) => void;
+  setSelectedEntryId: (id: number | null) => void;
+  setIsLoading: (loading: boolean) => void;
+  setIsSidebarOpen: (open: boolean) => void;
+  setIsEntryModalOpen: (open: boolean) => void;
+  setEditingEntry: (entry: Entry | null) => void;
+  setIsSettingsOpen: (open: boolean) => void;
+  setIsPasswordGeneratorOpen: (open: boolean) => void;
+  setConfirmDialog: (dialog: Partial<AppState['confirmDialog']>) => void;
+  updateSettings: (settings: Partial<AppSettings>) => void;
+  refreshAll: () => Promise<void>;
+}
+
+const defaultSettings: AppSettings = {
+  language: 'zh',
+  theme: 'default',
+  glassOpacity: 0.65,
+  dataPath: '',
+  background: {
+    type: 'linewaves',
+    source: '',
+    blur: 0,
+    opacity: 1,
+    darkOverlay: 0.25,
+  },
+  autoLockMinutes: 10,
+  clipboardClearSeconds: 30,
+};
+
+// 从 localStorage 恢复设置
+function loadSettings(): AppSettings {
+  try {
+    const raw = localStorage.getItem('fallvault-settings');
+    if (raw) {
+      const saved = JSON.parse(raw);
+      return { ...defaultSettings, ...saved, background: { ...defaultSettings.background, ...(saved.background || {}) } };
+    }
+  } catch {}
+  return defaultSettings;
+}
+
+const initialSettings = loadSettings();
+
+export const useAppStore = create<AppState>((set, get) => ({
+  entries: [],
+  folders: [],
+  tags: [],
+  favorites: [],
+  selectedFolderId: null,
+  selectedTagId: null,
+  searchQuery: '',
+  selectedEntryId: null,
+  isLoading: false,
+  isSidebarOpen: true,
+  isEntryModalOpen: false,
+  editingEntry: null,
+  isSettingsOpen: false,
+  isPasswordGeneratorOpen: false,
+  confirmDialog: { open: false },
+  settings: initialSettings,
+
+  setEntries: (entries) => set({ entries }),
+  setFolders: (folders) => set({ folders }),
+  setTags: (tags) => set({ tags }),
+  setFavorites: (favorites) => set({ favorites }),
+  setSelectedFolderId: (id) => set({ selectedFolderId: id, selectedTagId: null, searchQuery: '' }),
+  setSelectedTagId: (id) => set({ selectedTagId: id, selectedFolderId: null, searchQuery: '' }),
+  setSearchQuery: (query) => set({ searchQuery: query, selectedFolderId: null, selectedTagId: null }),
+  setSelectedEntryId: (id) => set({ selectedEntryId: id }),
+  setIsLoading: (loading) => set({ isLoading: loading }),
+  setIsSidebarOpen: (open) => set({ isSidebarOpen: open }),
+  setIsEntryModalOpen: (open) => set({ isEntryModalOpen: open }),
+  setEditingEntry: (entry) => set({ editingEntry: entry }),
+  setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
+  setIsPasswordGeneratorOpen: (open) => set({ isPasswordGeneratorOpen: open }),
+  setConfirmDialog: (dialog) => set({ confirmDialog: { ...get().confirmDialog, ...dialog } }),
+  updateSettings: (partial) => {
+    const next = { ...get().settings, ...partial };
+    // 主题切换时立即应用 CSS 变量
+    if (partial.theme) {
+      const theme = THEMES.find((t) => t.id === next.theme) || THEMES[0];
+      applyTheme(theme);
+    }
+    // 毛玻璃透明度直接应用（JS 计算 alpha，CSS 负责叠加暗色保护层）
+    if (partial.glassOpacity !== undefined) {
+      const alpha = Math.round(partial.glassOpacity * 100) / 100;
+      const root = document.documentElement;
+      root.style.setProperty('--glass-opacity', String(alpha));
+      // 线性映射：20%→0.12（轻度白），95%→0.72（明显白玻璃但文字仍可读）
+      const glassAlpha = 0.12 + ((alpha - 0.2) / 0.75) * 0.6;
+      root.style.setProperty('--glass-alpha', Math.min(0.75, Math.max(0.1, glassAlpha)).toFixed(2));
+    }
+    // 持久化到 localStorage（节流：拖动时最多每秒写 2 次）
+    try {
+      const now = Date.now();
+      const last = get().__lastPersist ?? 0;
+      if (now - last > 500) {
+        localStorage.setItem('fallvault-settings', JSON.stringify(next));
+        set({ settings: next, __lastPersist: now });
+      } else {
+        set({ settings: next });
+      }
+    } catch {
+      set({ settings: next });
+    }
+  },
+
+  refreshAll: async () => {
+    set({ isLoading: true });
+    try {
+      const { getFolders, getTags, getEntries, getFavorites } = await import('@/lib/db');
+      const [folders, tags, entries, favorites] = await Promise.all([
+        getFolders(),
+        getTags(),
+        getEntries(get().selectedFolderId || undefined, get().selectedTagId || undefined, get().searchQuery || undefined),
+        getFavorites(),
+      ]);
+      set({ folders, tags, entries, favorites });
+    } catch (e) {
+      console.error('Refresh failed:', e);
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+}));

@@ -1,0 +1,58 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for FallVault",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "sql:default",
+    "sql:allow-execute",
+    "dialog:default",
+    "fs:default",
+    "fs:allow-app-write-recursive",
+    "fs:allow-remove",
+    "fs:allow-copy-file",
+    "fs:allow-read-dir",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "D:/**" },
+        { "path": "D:\\**" },
+        { "path": "C:/**" },
+        { "path": "C:\\**" },
+        { "path": "$APPDATA/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "$HOME/*" },
+        { "path": "$HOME/**" },
+        { "path": "$DOWNLOAD/*" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/*" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/*" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$PICTURE/*" },
+        { "path": "$PICTURE/**" },
+        { "path": "D:/**" },
+        { "path": "D:\\**" },
+        { "path": "C:/**" },
+        { "path": "C:\\**" },
+        { "path": "$APPDATA/**" }
+      ]
+    },
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
+}
