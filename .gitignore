@@ -21,8 +21,12 @@ src-tauri/gen/schemas/
 # Local data & recordings
 *.db
 *.db-journal
-录制壁纸*.mp4
 test_record.mp4
+
+# Icon source (design files - not needed at runtime)
+assets/*.png
+assets/*.ico
+assets/*.svg
 
 # Editor
 .vscode/*
@@ -50,7 +54,3 @@ pnpm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
-
-# Icon source
-app-icon.png
-icon-preview.png
