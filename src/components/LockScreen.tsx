@@ -117,7 +117,7 @@ export function LockScreen({ onUnlocked }: LockScreenProps) {
               type={showPwd ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={isSetup ? '设置主密码（建议至少 8 位）' : '请输入主密码'}
+              placeholder={isSetup ? '设置主密码（至少 4 位）' : '请输入主密码'}
               autoFocus
               className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm outline-none transition-all focus:border-[var(--mint)] text-[var(--moon)] placeholder:text-[var(--moon-faint)]"
             />

@@ -11,14 +11,18 @@ import { SettingsPanel } from '@/components/SettingsPanel';
 import { PasswordGenerator } from '@/components/PasswordGenerator';
 import { TitleBar } from '@/components/TitleBar';
 import { LockScreen } from '@/components/LockScreen';
+import { ImportModal } from '@/components/ImportModal';
 import { useAppStore } from '@/stores/appStore';
 import { THEMES, applyTheme } from '@/types';
-import { hasMasterPassword, lockVault } from '@/lib/crypto';
+import { lockVault } from '@/lib/crypto';
+import { useAutoLock } from '@/hooks/useAutoLock';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 function App() {
   useDatabase();
   const { isEntryModalOpen, isSettingsOpen, isPasswordGeneratorOpen, settings } = useAppStore();
   const [locked, setLocked] = useState(true);
+  const [importOpen, setImportOpen] = useState(false);
 
   // 启动时应用主题 + 毛玻璃透明度
   useEffect(() => {
@@ -43,8 +47,37 @@ function App() {
     return () => window.removeEventListener('fallvault:lock', handler);
   }, []);
 
+  // 监听打开导入弹窗事件
+  useEffect(() => {
+    const handler = () => setImportOpen(true);
+    window.addEventListener('fallvault:open-import', handler);
+    return () => window.removeEventListener('fallvault:open-import', handler);
+  }, []);
+
+  // 自动锁定：闲置超时自动回解锁页
+  const handleAutoLock = () => {
+    lockVault().then(() => setLocked(true)).catch(() => setLocked(true));
+  };
+  useAutoLock(settings.autoLockEnabled, settings.autoLockMinutes, !locked, handleAutoLock);
+
+  // 最小化即锁定（用户偏好：点最小化立刻上锁）
+  useEffect(() => {
+    const unlistenFn = getCurrentWindow().onResized(async () => {
+      // 仅当窗口被最小化时锁定
+      const win = getCurrentWindow();
+      const minimized = await win.isMinimized();
+      if (minimized) {
+        await lockVault();
+        setLocked(true);
+      }
+    });
+    return () => { unlistenFn.then((fn) => fn()).catch(() => {}); };
+  }, []);
+
+  // 解锁后刷新数据（分类/标签/账号）
   const handleUnlocked = () => {
     setLocked(false);
+    useAppStore.getState().refreshAll();
   };
 
   const handleLock = async () => {
@@ -77,6 +110,12 @@ function App() {
       {!locked && isEntryModalOpen && <EntryModal />}
       {!locked && isSettingsOpen && <SettingsPanel />}
       {!locked && isPasswordGeneratorOpen && <PasswordGenerator />}
+      {!locked && importOpen && (
+        <ImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={() => { useAppStore.getState().refreshAll(); }}
+        />
+      )}
       <Toast />
       <ConfirmDialog />
     </div>

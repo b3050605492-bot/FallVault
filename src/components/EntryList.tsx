@@ -3,7 +3,7 @@ import { EntryCard } from './EntryCard';
 import { Lock, Loader2 } from 'lucide-react';
 
 export function EntryList() {
-  const { entries, isLoading, searchQuery, selectedFolderId, favorites } = useAppStore();
+  const { entries, isLoading, searchQuery, selectedFolderId, favorites, selectedTagId } = useAppStore();
 
   const displayEntries = selectedFolderId === -1 ? favorites : entries;
 

@@ -21,6 +21,7 @@ export interface Entry {
   password: string;
   website: string;
   notes: string;
+  totp_secret?: string;
   icon: string;
   folder_id: number | null;
   is_favorite: boolean;
@@ -62,6 +63,7 @@ export interface AppSettings {
     opacity: number;
     darkOverlay: number;
   };
+  autoLockEnabled: boolean;
   autoLockMinutes: number;
   clipboardClearSeconds: number;
 }

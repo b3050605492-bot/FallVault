@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS entries (
   password TEXT NOT NULL DEFAULT '',
   website TEXT DEFAULT '',
   notes TEXT DEFAULT '',
+  totp_secret TEXT DEFAULT '',
   icon TEXT DEFAULT 'Lock',
   folder_id INTEGER DEFAULT NULL,
   is_favorite INTEGER DEFAULT 0,
@@ -86,12 +87,24 @@ INSERT OR IGNORE INTO tags (id, name, color) VALUES
   (3, '待更新', '#D4B070'),
   (4, '游戏', '#C0C8D8'),
   (5, '银行', '#7DB8D3');
+
+-- 兼容迁移：老库补充新增列（如 totp_secret）
 `;
+
 
 export async function initDatabase(): Promise<Database> {
   if (db) return db;
   db = await Database.load('sqlite:fallvault.db');
   await db.execute(INIT_SQL);
+  // 兼容迁移：老库补列（ALTER TABLE 已存在列会报错，捕获忽略）
+  const migrations = [
+    "ALTER TABLE entries ADD COLUMN totp_secret TEXT DEFAULT ''",
+  ];
+  for (const m of migrations) {
+    try {
+      await db.execute(m);
+    } catch {}
+  }
   return db;
 }
 
@@ -137,17 +150,23 @@ export async function deleteTag(id: number): Promise<void> {
 
 // === 加解密辅助 ===
 // 解密一行 entry 的敏感字段（password/username/notes）
+// 单条解密失败不拖垮整组：该字段置空并记录错误（可能是旧密钥加密的残留）
 async function decryptRows(rows: any[]): Promise<any[]> {
   const key = getMasterKey();
-  // 未解锁但数据库里是明文（旧数据）→ 原样返回；加密数据但未解锁 → 返回空（理论上不会发生，因为未解锁进不了主界面）
   const out: any[] = [];
   for (const r of rows) {
-    out.push({
-      ...r,
-      password: await decryptField(key as any, r.password),
-      username: await decryptField(key as any, r.username),
-      notes: await decryptField(key as any, r.notes),
-    });
+    const row: any = { ...r, password: '', username: '', notes: '', totp_secret: '' };
+    let err = '';
+    for (const field of ['password', 'username', 'notes', 'totp_secret'] as const) {
+      try {
+        row[field] = await decryptField(key as any, r[field]);
+      } catch (e: any) {
+        if (!err) err = `${field}=${e?.message || 'decrypt fail'}`;
+        row[field] = '';
+      }
+    }
+    if (err) row.__decryptError = err;
+    out.push(row);
   }
   return out;
 }
@@ -169,9 +188,10 @@ export async function getEntries(folderId?: number, tagId?: number, search?: str
     params.push(folderId);
   }
   if (search) {
-    conditions.push(`(e.title LIKE ? OR e.username LIKE ? OR e.website LIKE ? OR e.notes LIKE ?)`);
+    // 仅明文字段在 SQL 里搜索（title/website）；加密字段在内存过滤
+    conditions.push(`(e.title LIKE ? OR e.website LIKE ?)`);
     const like = `%${search}%`;
-    params.push(like, like, like, like);
+    params.push(like, like);
   }
   if (tagId !== undefined) {
     conditions.push('et.tag_id = ?');
@@ -185,7 +205,19 @@ export async function getEntries(folderId?: number, tagId?: number, search?: str
   sql += ' GROUP BY e.id ORDER BY e.is_favorite DESC, e.updated_at DESC';
 
   const rows: any[] = await getDb().select(sql, params);
-  return decryptRows(rows);
+  const decrypted = await decryptRows(rows);
+  // 加密字段（username/notes）在解密后进行内存匹配
+  if (search) {
+    const needle = search.toLowerCase();
+    return decrypted.filter((e) => {
+      const titleMatch = (e.title || '').toLowerCase().includes(needle);
+      const websiteMatch = (e.website || '').toLowerCase().includes(needle);
+      const userMatch = (e.username || '').toLowerCase().includes(needle);
+      const notesMatch = (e.notes || '').toLowerCase().includes(needle);
+      return titleMatch || websiteMatch || userMatch || notesMatch;
+    });
+  }
+  return decrypted;
 }
 
 export async function getFavorites(): Promise<Entry[]> {
@@ -214,12 +246,13 @@ export async function getEntryTags(entryId: number): Promise<number[]> {
 export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []): Promise<number> {
   const key = getMasterKey();
   const result = await getDb().execute(
-    `INSERT INTO entries (title, username, password, website, notes, icon, folder_id, is_favorite)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO entries (title, username, password, totp_secret, website, notes, icon, folder_id, is_favorite)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.title || '',
       entry.username ? await encryptField(key as any, entry.username) : '',
       entry.password ? await encryptField(key as any, entry.password) : '',
+      entry.totp_secret ? await encryptField(key as any, entry.totp_secret) : '',
       entry.website || '',
       entry.notes ? await encryptField(key as any, entry.notes) : '',
       entry.icon || 'Lock',
@@ -251,13 +284,14 @@ export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: nu
   }
 
   await getDb().execute(
-    `UPDATE entries SET title = ?, username = ?, password = ?, website = ?, notes = ?, 
+    `UPDATE entries SET title = ?, username = ?, password = ?, totp_secret = ?, website = ?, notes = ?, 
      icon = ?, folder_id = ?, is_favorite = ?, updated_at = datetime('now', 'localtime')
      WHERE id = ?`,
     [
       entry.title,
       entry.username ? await encryptField(key as any, entry.username) : '',
       entry.password ? await encryptField(key as any, entry.password) : '',
+      entry.totp_secret ? await encryptField(key as any, entry.totp_secret) : '',
       entry.website,
       entry.notes ? await encryptField(key as any, entry.notes) : '',
       entry.icon,

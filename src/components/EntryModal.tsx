@@ -189,6 +189,8 @@ export function EntryModal() {
         addToast('账号添加成功', 'success');
       }
 
+      // 保存后重置到"全部账号"视图，确保新账号立即可见
+      useAppStore.getState().setSelectedFolderId(null);
       await refreshAll();
       setIsEntryModalOpen(false);
       setEditingEntry(null);
@@ -403,6 +405,24 @@ export function EntryModal() {
             <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
               placeholder="安全提问答案、备用邮箱等..." rows={3}
               className="rune-input w-full px-3 py-2.5 text-sm resize-none" />
+          </div>
+
+          {/* 两步验证密钥 (TOTP) */}
+          <div>
+            <label className="text-xs text-[var(--moon-faint)] mb-1 block flex items-center gap-1.5">
+              <KeyRound size={11} /> 两步验证 (2FA) 密钥
+            </label>
+            <input
+              value={form.totp_secret || ''}
+              onChange={e => setForm({ ...form, totp_secret: e.target.value.trim() })}
+              placeholder="粘贴 TOTP 密钥或 otpauth:// URI（如 JBSWY3DPEHPK3PXP）"
+              className="rune-input w-full px-3 py-2.5 text-sm font-mono"
+            />
+            {form.totp_secret && (
+              <p className="text-[11px] text-[var(--mint)] mt-1.5 flex items-center gap-1">
+                <RefreshCw size={10} /> 保存后卡片上会实时显示 6 位验证码
+              </p>
+            )}
           </div>
 
           {/* 密码历史 */}

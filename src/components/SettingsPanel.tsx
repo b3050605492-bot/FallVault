@@ -1,7 +1,7 @@
 import { useAppStore } from '@/stores/appStore';
 import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
-import { X, Palette, Languages, GlassWater, Waves, Sparkles, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock } from 'lucide-react';
+import { X, Palette, Languages, GlassWater, Waves, Sparkles, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save } from 'lucide-react';
 import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -22,6 +22,11 @@ export function SettingsPanel() {
   const [confirmPwd, setConfirmPwd] = useState('');
   const [pwdLoading, setPwdLoading] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [backupAction, setBackupAction] = useState<'export' | 'import' | null>(null);
+  const [backupPwd, setBackupPwd] = useState('');
+  const [backupPwd2, setBackupPwd2] = useState('');
+  const [backupBusy, setBackupBusy] = useState(false);
 
   const setBackground = (type: 'linewaves' | 'particles') => {
     updateSettings({ background: { ...settings.background, type } });
@@ -97,6 +102,69 @@ export function SettingsPanel() {
       addToast(isEn ? 'Update failed' : '更新失败', 'error');
     } finally {
       setPwdLoading(false);
+    }
+  };
+
+  // 加密备份导出/恢复
+  const handleBackup = async () => {
+    if (backupAction === 'export') {
+      if (backupPwd.length < 4) {
+        addToast(isEn ? 'Backup password too short (min 4)' : '备份密码至少 4 位', 'warning');
+        return;
+      }
+      if (backupPwd !== backupPwd2) {
+        addToast(isEn ? 'Passwords do not match' : '两次输入的密码不一致', 'warning');
+        return;
+      }
+    } else {
+      if (!backupPwd) {
+        addToast(isEn ? 'Enter backup password' : '请输入备份密码', 'warning');
+        return;
+      }
+    }
+    setBackupBusy(true);
+    try {
+      if (backupAction === 'export') {
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const { exportVault, backupStamp } = await import('@/lib/vaultBackup');
+        const filePath = await save({
+          defaultPath: `FallVault_备份_${backupStamp()}.fvault`,
+          filters: [{ name: 'FallVault 备份', extensions: ['fvault'] }],
+        });
+        if (!filePath) return;
+        const res = await exportVault(backupPwd, filePath);
+        addToast(
+          isEn
+            ? `Backup saved (${res.exported} entries${res.attachments ? `, ${res.attachments} attachments` : ''})`
+            : `备份成功（${res.exported} 个账号${res.attachments ? `，${res.attachments} 个附件` : ''}）`,
+          'success'
+        );
+      } else {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const { restoreVault } = await import('@/lib/vaultBackup');
+        const filePath = await open({
+          multiple: false,
+          filters: [{ name: 'FallVault 备份', extensions: ['fvault'] }],
+        });
+        if (!filePath || typeof filePath !== 'string') return;
+        const res = await restoreVault(backupPwd, filePath);
+        addToast(
+          isEn
+            ? `Restored ${res.newEntries} entries (skipped ${res.skippedEntries} duplicates)`
+            : `恢复完成：新增 ${res.newEntries} 个账号（跳过 ${res.skippedEntries} 个重复）`,
+          'success'
+        );
+        // 恢复后刷新全部数据
+        useAppStore.getState().refreshAll();
+      }
+      setShowBackupModal(false);
+      setBackupPwd('');
+      setBackupPwd2('');
+    } catch (e: any) {
+      console.error('backup failed', e);
+      addToast(e?.message || (isEn ? 'Operation failed' : '操作失败'), 'error');
+    } finally {
+      setBackupBusy(false);
     }
   };
 
@@ -464,6 +532,47 @@ export function SettingsPanel() {
             </div>
           </div>
 
+          {/* 自动锁定 */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Timer size={15} style={{ color: 'var(--mint)' }} />
+              <h3 className="text-sm font-semibold text-[var(--moon)]">
+                {isEn ? 'Auto Lock' : '自动锁定'}
+              </h3>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-[var(--moon-dim)] cursor-pointer mb-3">
+              <input
+                type="checkbox"
+                checked={settings.autoLockEnabled}
+                onChange={(e) => updateSettings({ autoLockEnabled: e.target.checked })}
+                className="accent-[var(--mint)]"
+              />
+              {isEn ? 'Lock after inactivity' : '闲置一段时间后自动锁定'}
+            </label>
+            {settings.autoLockEnabled && (
+              <div className="flex gap-1.5 flex-wrap">
+                {[5, 10, 15, 30].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => updateSettings({ autoLockMinutes: m })}
+                    className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                      settings.autoLockMinutes === m
+                        ? 'border-[var(--mint)] text-[var(--mint)] bg-[rgba(125,211,192,0.1)]'
+                        : 'border-[rgba(192,200,216,0.15)] text-[var(--moon-dim)] hover:border-[rgba(192,200,216,0.3)]'
+                    }`}
+                  >
+                    {m} {isEn ? 'min' : '分钟'}
+                  </button>
+                ))}
+              </div>
+            )}
+            <p className="text-[11px] text-[var(--moon-faint)] mt-2">
+              {isEn
+                ? 'Locking instantly when minimized is always on'
+                : '最小化窗口时会立即锁定（始终生效）'}
+            </p>
+          </div>
+
           {/* 安全 */}
           <div>
             <div className="flex items-center gap-2 mb-3">
@@ -491,6 +600,27 @@ export function SettingsPanel() {
                 <Lock size={13} /> {isEn ? 'Lock' : '锁定应用'}
               </button>
             </div>
+
+            {/* 加密备份 / 恢复 */}
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={() => { setBackupAction('export'); setShowBackupModal(true); }}
+                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all flex items-center justify-center gap-1.5"
+              >
+                <Save size={13} /> {isEn ? 'Backup (.fvault)' : '加密备份 (.fvault)'}
+              </button>
+              <button
+                onClick={() => { setBackupAction('import'); setShowBackupModal(true); }}
+                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all flex items-center justify-center gap-1.5"
+              >
+                <FolderCog size={13} /> {isEn ? 'Restore' : '恢复备份'}
+              </button>
+            </div>
+            <p className="text-[11px] text-[var(--moon-faint)] mt-2 leading-relaxed">
+              {isEn
+                ? 'Backup encrypts all entries + attachments into one .fvault file with a password. Restore merges it back.'
+                : '备份会把全部账号和附件加密为一个 .fvault 文件（需设置备份密码）。恢复时合并回保险库。'}
+            </p>
           </div>
         </div>
       </div>
@@ -553,6 +683,82 @@ export function SettingsPanel() {
                   ? 'Changing the password re-encrypts the key. Existing data stays encrypted.'
                   : '修改主密码会重新派生密钥，已加密的数据保持不变，无需迁移。'}
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 加密备份 / 恢复 弹窗 */}
+      {showBackupModal && backupAction && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-6"
+          style={{ background: 'rgba(8,8,16,0.6)', backdropFilter: 'blur(4px)' }}
+          onClick={() => { if (!backupBusy) setShowBackupModal(false); }}
+        >
+          <div
+            className="glass-card w-full max-w-sm rounded-3xl p-6"
+            style={{
+              background: 'var(--glass-bg)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              border: '1px solid var(--glass-border, rgba(255,245,245,0.4))',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-base font-semibold text-[var(--moon)] flex items-center gap-2">
+                <Save size={16} style={{ color: 'var(--mint)' }} />
+                {backupAction === 'export'
+                  ? (isEn ? 'Encrypted Backup' : '加密备份')
+                  : (isEn ? 'Restore Backup' : '恢复备份')}
+              </h3>
+              <button onClick={() => { if (!backupBusy) setShowBackupModal(false); }} className="text-[var(--moon-faint)] hover:text-[var(--moon)]">
+                <X size={16} />
+              </button>
+            </div>
+
+            {backupAction === 'export' ? (
+              <p className="text-xs text-[var(--moon-faint)] mb-4 leading-relaxed">
+                {isEn
+                  ? 'Create an encrypted .fvault backup with a password. It contains all entries, folders, tags and attachments.'
+                  : '用备份密码生成加密 .fvault 文件，包含所有账号、分类、标签和附件。整个文件只有用密码才能解开。'}
+              </p>
+            ) : (
+              <p className="text-xs text-[var(--moon-faint)] mb-4 leading-relaxed">
+                {isEn
+                  ? 'Choose a .fvault backup file and enter its password to merge it back. Duplicate entries are skipped.'
+                  : '选择 .fvault 备份文件并输入它的密码，合并回保险库。重复的账号会自动跳过。'}
+              </p>
+            )}
+
+            <div className="space-y-3">
+              <input
+                type="password"
+                value={backupPwd}
+                onChange={(e) => setBackupPwd(e.target.value)}
+                placeholder={isEn ? 'Backup password' : '备份密码'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none transition-all focus:border-[var(--mint)] text-[var(--moon)] placeholder:text-[var(--moon-faint)]"
+              />
+              {backupAction === 'export' && (
+                <input
+                  type="password"
+                  value={backupPwd2}
+                  onChange={(e) => setBackupPwd2(e.target.value)}
+                  placeholder={isEn ? 'Confirm backup password' : '再次输入备份密码'}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none transition-all focus:border-[var(--mint)] text-[var(--moon)] placeholder:text-[var(--moon-faint)]"
+                />
+              )}
+              <button
+                onClick={handleBackup}
+                disabled={backupBusy || !backupPwd}
+                className="w-full py-2.5 rounded-xl font-semibold text-sm transition-all disabled:opacity-40"
+                style={{ background: 'rgba(125,211,192,0.2)', color: 'var(--mint)' }}
+              >
+                {backupBusy
+                  ? (isEn ? 'Working...' : '处理中…')
+                  : (backupAction === 'export' ? (isEn ? 'Create Backup' : '生成备份文件') : (isEn ? 'Restore' : '开始恢复'))}
+              </button>
             </div>
           </div>
         </div>

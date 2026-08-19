@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Lock, Star, ExternalLink, Copy, Eye, EyeOff, Edit2, Trash2, Paperclip } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -6,6 +6,7 @@ import { toggleFavorite, deleteEntry } from '@/lib/db';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { GlareHover } from '@/components/GlareHover';
+import { getTotpWithRemaining } from '@/lib/totp';
 import { ClickSpark } from '@/components/ClickSpark';
 import type { Entry } from '@/types';
 
@@ -29,11 +30,30 @@ function useImgError() {
 }
 
 export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }) {
-  const { setEditingEntry, setIsEntryModalOpen, refreshAll, setConfirmDialog } = useAppStore();
+  const { setEditingEntry, setIsEntryModalOpen, refreshAll, setConfirmDialog, settings } = useAppStore();
   const { addToast } = useToastStore();
+  const isEn = settings?.language === 'en';
   const [showPassword, setShowPassword] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isHovered, setIsHovered] = useState(false);
+  const [totp, setTotp] = useState<{ code: string; remaining: number } | null>(null);
+
+  // TOTP 定时刷新（30 秒一次 + 每 1 秒更新剩余倒计时）
+  useEffect(() => {
+    if (!entry.totp_secret) return;
+    let cancelled = false;
+    const refresh = () => {
+      getTotpWithRemaining(entry.totp_secret!).then((v) => {
+        if (!cancelled) setTotp(v);
+      }).catch(() => {});
+    };
+    refresh();
+    const t1 = setInterval(refresh, 30000);
+    const t2 = setInterval(() => {
+      setTotp((prev) => prev ? { ...prev, remaining: Math.max(0, prev.remaining - 1) } : prev);
+    }, 1000);
+    return () => { cancelled = true; clearInterval(t1); clearInterval(t2); };
+  }, [entry.totp_secret]);
 
   const faviconUrl = getFaviconUrl(entry.website);
   const hasCustomIcon = entry.icon && entry.icon !== 'Lock' && entry.icon !== '';
@@ -47,7 +67,11 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
   const handleCopy = async (text: string, field: string) => {
     await writeText(text);
     setCopiedField(field);
-    addToast(`${field === 'password' ? '密码' : '账号'}已复制`, 'success');
+    addToast(
+      field === 'password' ? (isEn ? 'Password copied' : '密码已复制')
+      : field === 'totp' ? (isEn ? 'Code copied' : '验证码已复制')
+      : (isEn ? 'Username copied' : '账号已复制'), 'success'
+    );
     setTimeout(() => setCopiedField(null), 2000);
   };
 
@@ -161,6 +185,34 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
                 {copiedField === 'password' && <span className="text-[10px] text-[var(--mint)]">已复制</span>}
               </div>
             </div>
+
+            {/* TOTP 验证码 */}
+            {entry.totp_secret && totp && (
+              <div className="flex items-center gap-2 mt-2 group">
+                <span className="text-[11px] text-[var(--moon-faint)] w-10 font-medium uppercase tracking-wider">2FA</span>
+                <code className="flex-1 text-sm font-mono tracking-[0.25em]" style={{ color: 'var(--mint)' }}>
+                  {totp.code}
+                </code>
+                {/* 倒计时条 */}
+                <div className="relative w-8 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(192,200,216,0.15)' }}>
+                  <div
+                    className="absolute left-0 top-0 bottom-0 rounded-full transition-all duration-1000 ease-linear"
+                    style={{
+                      width: `${(totp.remaining / 30) * 100}%`,
+                      background: totp.remaining <= 5 ? 'var(--danger, #D47070)' : 'var(--mint)',
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleCopy(totp.code, 'totp'); }}
+                  className="opacity-0 group-hover:opacity-100 text-[var(--moon-faint)] hover:text-[var(--mint)] transition-all p-1"
+                  title={isEn ? 'Copy code' : '复制验证码'}
+                >
+                  <Copy size={13} />
+                </button>
+                {copiedField === 'totp' && <span className="text-[10px] text-[var(--mint)]">已复制</span>}
+              </div>
+            )}
 
             {/* 标签 */}
             {tagNames.length > 0 && (

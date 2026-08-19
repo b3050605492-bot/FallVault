@@ -175,12 +175,67 @@ export async function lockVault(): Promise<void> {
   masterKey = null;
 }
 
-// 修改主密码（需已解锁）
+// 修改主密码（需已解锁）——无损版：先把全部数据用旧密钥解密，再用新密钥重新加密写回
 export async function changeMasterPassword(newPassword: string): Promise<void> {
   if (!masterKey) throw new Error('vault locked');
+  const oldKey = masterKey;
+
+  // 1. 用旧密钥读出全部明文
+  const d = await Database.load('sqlite:fallvault.db');
+  const entries: any[] = await d.select(
+    'SELECT id, username, password, notes FROM entries'
+  );
+  const plain = [];
+  for (const r of entries) {
+    try {
+      plain.push({
+        id: r.id,
+        username: await decryptField(oldKey, r.username),
+        password: await decryptField(oldKey, r.password),
+        notes: await decryptField(oldKey, r.notes),
+      });
+    } catch (e) {
+      // 旧密钥解不开的记录（异常残留）跳过，不阻断改密码
+      console.error('re-encrypt skip entry', r.id, e);
+    }
+  }
+  const hisRows: any[] = await d.select(
+    'SELECT id, old_password FROM password_history'
+  );
+  const history: { id: number; old_password: string }[] = [];
+  for (const h of hisRows) {
+    try {
+      history.push({ id: h.id, old_password: await decryptField(oldKey, h.old_password) });
+    } catch (e) {
+      console.error('re-encrypt skip history', h.id, e);
+    }
+  }
+
+  // 2. 生成新盐 + 新密钥 + 新校验值
   const salt = randomBytes(SALT_LENGTH);
   const newKey = await deriveKey(newPassword, salt);
   const verifier = await encryptField(newKey, VERIFY_TEXT);
+
+  // 3. 用新密钥重新加密全部数据并写回
+  for (const p of plain) {
+    await d.execute(
+      'UPDATE entries SET username = ?, password = ?, notes = ? WHERE id = ?',
+      [
+        await encryptField(newKey, p.username),
+        await encryptField(newKey, p.password),
+        await encryptField(newKey, p.notes),
+        p.id,
+      ]
+    );
+  }
+  for (const h of history) {
+    await d.execute(
+      'UPDATE password_history SET old_password = ? WHERE id = ?',
+      [await encryptField(newKey, h.old_password), h.id]
+    );
+  }
+
+  // 4. 更新元数据 + 内存密钥
   await metaSet('master_salt', bytesToB64(salt));
   await metaSet('master_verifier', verifier);
   masterKey = newKey;

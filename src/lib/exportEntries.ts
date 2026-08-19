@@ -207,3 +207,52 @@ export async function defaultExportDir(): Promise<string> {
     return '';
   }
 }
+
+// 导出 csv
+export async function exportToCsv(entries: Entry[], folders: Folder[], tags: Tag[], savePath: string): Promise<void> {
+  const rows = sortRows(buildRows(entries, folders, tags));
+  // BOM 让 Excel 正确识别 UTF-8 中文
+  const header = ['序号', '标题', '分类', '标签', '账号/用户名', '密码', '网站地址', '备注', '收藏', '创建时间', '更新时间'];
+  const lines = [header.join(',')];
+  rows.forEach((r, i) => {
+    const cells = [
+      String(i + 1), r.title, r.folderName, r.tagNames, r.username, r.password, r.website, r.notes, r.isFavorite, r.createdAt, r.updatedAt,
+    ];
+    // 转义：包含逗号/引号/换行的字段加引号
+    lines.push(cells.map((c) => {
+      const s = String(c ?? '');
+      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    }).join(','));
+  });
+  const content = '\uFEFF' + lines.join('\r\n');
+  const encoder = new TextEncoder();
+  await writeFile(savePath, encoder.encode(content));
+}
+
+// 导出 json（结构化：含分类/标签信息，可回导）
+export async function exportToJson(entries: Entry[], folders: Folder[], tags: Tag[], savePath: string): Promise<void> {
+  const rows = sortRows(buildRows(entries, folders, tags));
+  const { appDataDir } = await import('@tauri-apps/api/path');
+  const data = {
+    app: 'FallVault',
+    version: '1.1.0',
+    exportedAt: formatTime(new Date().toISOString()),
+    count: rows.length,
+    entries: rows.map((r) => ({
+      title: r.title,
+      username: r.username,
+      password: r.password,
+      website: r.website,
+      notes: r.notes,
+      folder: r.folderName,
+      tags: r.tagNames,
+      isFavorite: r.isFavorite === '是',
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    })),
+  };
+  const content = JSON.stringify(data, null, 2);
+  const encoder = new TextEncoder();
+  await writeFile(savePath, encoder.encode(content));
+}

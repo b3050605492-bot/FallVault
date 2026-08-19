@@ -66,7 +66,8 @@ const defaultSettings: AppSettings = {
     opacity: 1,
     darkOverlay: 0.25,
   },
-  autoLockMinutes: 10,
+  autoLockEnabled: true,
+  autoLockMinutes: 5,
   clipboardClearSeconds: 30,
 };
 
@@ -152,12 +153,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ isLoading: true });
     try {
       const { getFolders, getTags, getEntries, getFavorites } = await import('@/lib/db');
-      const [folders, tags, entries, favorites] = await Promise.all([
-        getFolders(),
-        getTags(),
-        getEntries(get().selectedFolderId || undefined, get().selectedTagId || undefined, get().searchQuery || undefined),
-        getFavorites(),
-      ]);
+      const { isLocked } = await import('@/lib/crypto');
+          // 分类/标签不涉及加密，始终可加载
+      const [folders, tags] = await Promise.all([getFolders(), getTags()]);
+          let entries: any[] = [];
+      let favorites: any[] = [];
+      // 账号数据需要解锁后才可读（否则保持空，等解锁后再刷）
+      if (!isLocked()) {
+        try {
+          const results = await Promise.all([
+            getEntries(get().selectedFolderId || undefined, get().selectedTagId || undefined, get().searchQuery || undefined),
+            getFavorites(),
+          ]);
+          entries = results[0];
+          favorites = results[1];
+                } catch (e) {
+        }
+      } else {
+            }
       set({ folders, tags, entries, favorites });
     } catch (e) {
       console.error('Refresh failed:', e);
