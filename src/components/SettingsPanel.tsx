@@ -1,8 +1,9 @@
 import { useAppStore } from '@/stores/appStore';
 import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
-import { BUILTIN_WALLPAPERS } from '@/lib/constants';
+import { BUILTIN_WALLPAPERS, DEFAULT_BG_TOKEN } from '@/lib/constants';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { resourceDir } from '@tauri-apps/api/path';
 import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone } from 'lucide-react';
 import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -71,6 +72,24 @@ export function SettingsPanel() {
         darkOverlay: settings.background.darkOverlay || 0.45,
       },
     });
+  };
+
+  // 内置壁纸预览缩略图（支持 @resource: 标记，运行时解析为安装包 resources 路径）
+  const BuiltinThumb = ({ preview }: { preview: string }) => {
+    const [url, setUrl] = useState('');
+    useEffect(() => {
+      let mounted = true;
+      if (!preview || !preview.startsWith('@resource:')) {
+        if (mounted) setUrl(preview ? convertFileSrc(preview) : '');
+        return;
+      }
+      const name = preview.slice('@resource:'.length);
+      resourceDir().then((dir) => {
+        if (mounted) setUrl(convertFileSrc(`${dir}/${name}`));
+      }).catch(() => {});
+      return () => { mounted = false; };
+    }, [preview]);
+    return <div className="h-20 w-full bg-cover bg-center" style={{ backgroundImage: url ? `url("${url}")` : undefined }} />;
   };
 
   // 修改主密码
@@ -388,7 +407,7 @@ export function SettingsPanel() {
                         : 'rgba(18,18,30,0.5)',
                     }}
                   >
-                    <div className="h-20 w-full bg-cover bg-center" style={{ backgroundImage: `url("${convertFileSrc(wp.preview)}")` }} />
+                    <BuiltinThumb preview={wp.preview} />
                     {active && (
                       <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'var(--mint)' }}>
                         <span className="text-[10px]" style={{ color: '#12121E' }}>✓</span>

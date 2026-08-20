@@ -1,27 +1,41 @@
 import { useAppStore } from '@/stores/appStore';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { SHIRO_VIDEO } from '@/lib/constants';
+import { resourceDir } from '@tauri-apps/api/path';
+import { useEffect, useState } from 'react';
+import { DEFAULT_BG_TOKEN } from '@/lib/constants';
 
-// 基础背景（白凪 shiro）
+// 把 @resource:xxx 标记解析为安装包 resources 目录下的绝对路径
+// 这样内置背景图片随安装包分发，不依赖写死的绝对路径
+async function resolveSource(src: string): Promise<string> {
+  if (!src || !src.startsWith('@resource:')) return src;
+  const name = src.slice('@resource:'.length);
+  try {
+    const dir = await resourceDir();
+    return `${dir}/${name}`;
+  } catch {
+    return src;
+  }
+}
 
 export function Background() {
   const { settings } = useAppStore();
   const { background } = settings;
 
-  // 背景类型：'particles' | 'sakura' 已废弃，统一回退到内置 shiro 视频；
-  // 'image' | 'video' 用自定义源；默认 shiro 视频
   const isCustom = background?.type === 'image' || background?.type === 'video';
-  const bgType: 'video' | 'image' = isCustom ? (background!.type as 'video' | 'image') : 'video';
-
-  // 实际使用的媒体源：自定义则用 source，否则用内置 白凪 shiro 视频
-  const rawSource = isCustom && background?.source ? background.source : SHIRO_VIDEO;
+  const bgType: 'video' | 'image' = isCustom ? (background!.type as 'video' | 'image') : 'image';
   const opacity = background?.opacity ?? 1;
 
-  // 媒体背景自动加深遮罩（保证文字可读性）
-  const isMediaBg = true;
-  const darkOverlay = Math.max(0.45, background?.darkOverlay ?? 0.45);
+  // 解析媒体源（处理 @resource: 标记）
+  const [rawSource, setRaw] = useState(background?.source || DEFAULT_BG_TOKEN);
+  useEffect(() => {
+    let mounted = true;
+    resolveSource(background?.source || DEFAULT_BG_TOKEN).then((r) => {
+      if (mounted) setRaw(r);
+    });
+    return () => { mounted = false; };
+  }, [background?.source]);
 
-  // 本地文件路径 → WebView 可访问地址
+  const darkOverlay = Math.max(0.45, background?.darkOverlay ?? 0.45);
   const mediaUrl = rawSource ? convertFileSrc(rawSource) : '';
 
   return (

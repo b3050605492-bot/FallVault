@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Entry, Folder, Tag, AppSettings, ThemeDef } from '@/types';
 import { THEMES, applyTheme } from '@/types';
-import { SHIRO_VIDEO } from '@/lib/constants';
+import { DEFAULT_BG_TOKEN } from '@/lib/constants';
 
 interface AppState {
   // Data
@@ -66,9 +66,9 @@ const defaultSettings: AppSettings = {
   theme: 'default',
   glassOpacity: 0.65,
   background: {
-    type: 'video',
-    source: SHIRO_VIDEO,
-    name: '白凪 shiro',
+    type: 'image',
+    source: DEFAULT_BG_TOKEN,
+    name: '默认壁纸',
     blur: 0,
     opacity: 1,
     darkOverlay: 0.45,
