@@ -66,7 +66,7 @@ export function SettingsPanel() {
       background: {
         ...settings.background,
         type: wp.type,
-        source: wp.type === 'ferrofluid' ? '' : wp.source,
+        source: wp.source,
         name: wp.name,
         darkOverlay: settings.background.darkOverlay || 0.45,
       },
@@ -388,15 +388,7 @@ export function SettingsPanel() {
                         : 'rgba(18,18,30,0.5)',
                     }}
                   >
-                    <div
-                      className="h-20 w-full bg-cover bg-center"
-                      style={{
-                        backgroundImage:
-                          wp.type === 'ferrofluid'
-                            ? 'radial-gradient(circle at 30% 30%, #1b2a4a, #05060a 70%)'
-                            : `url("${convertFileSrc(wp.preview)}")`,
-                      }}
-                    />
+                    <div className="h-20 w-full bg-cover bg-center" style={{ backgroundImage: `url("${convertFileSrc(wp.preview)}")` }} />
                     {active && (
                       <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'var(--mint)' }}>
                         <span className="text-[10px]" style={{ color: '#12121E' }}>✓</span>
@@ -405,7 +397,7 @@ export function SettingsPanel() {
                     <div className="p-2.5">
                       <div className="text-xs font-medium text-[var(--moon)] truncate">{wp.name}</div>
                       <div className="text-[10px] text-[var(--moon-faint)] mt-0.5">
-                        {wp.type === 'ferrofluid' ? (isEn ? 'Dynamic' : '动态') : wp.type === 'video' ? (isEn ? 'Video' : '视频') : (isEn ? 'Image' : '图片')}
+                        {wp.type === 'video' ? (isEn ? 'Video' : '视频') : (isEn ? 'Image' : '图片')}
                       </div>
                     </div>
                   </button>
