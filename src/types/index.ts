@@ -63,7 +63,7 @@ export interface AppSettings {
   theme: 'default' | 'sakura' | 'azure';
   glassOpacity: number;
   background: {
-    type: 'particles' | 'sakura' | 'image' | 'video' | 'color';
+    type: 'particles' | 'sakura' | 'image' | 'video' | 'color' | 'ferrofluid';
     source: string;
     name?: string;
     blur: number;

@@ -66,9 +66,9 @@ const defaultSettings: AppSettings = {
   theme: 'default',
   glassOpacity: 0.65,
   background: {
-    type: 'video',
-    source: SHIRO_VIDEO,
-    name: '白凪 shiro',
+    type: 'ferrofluid',
+    source: '',
+    name: '磁性流体 Ferrofluid',
     blur: 0,
     opacity: 1,
     darkOverlay: 0.45,
