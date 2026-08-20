@@ -99,6 +99,7 @@ export async function initDatabase(): Promise<Database> {
   // 兼容迁移：老库补列（ALTER TABLE 已存在列会报错，捕获忽略）
   const migrations = [
     "ALTER TABLE entries ADD COLUMN totp_secret TEXT DEFAULT ''",
+    "ALTER TABLE entries ADD COLUMN custom_fields TEXT DEFAULT ''",
   ];
   for (const m of migrations) {
     try {
@@ -111,6 +112,14 @@ export async function initDatabase(): Promise<Database> {
 export function getDb(): Database {
   if (!db) throw new Error('Database not initialized');
   return db;
+}
+
+// 将 WAL 数据落盘到主库（防止恢复备份/退出时丢失 master 校验与最新写入）
+export async function checkpointDatabase(): Promise<void> {
+  try {
+    const d = getDb();
+    await d.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch { /* ignore */ }
 }
 
 // === Folders ===
@@ -149,13 +158,13 @@ export async function deleteTag(id: number): Promise<void> {
 }
 
 // === 加解密辅助 ===
-// 解密一行 entry 的敏感字段（password/username/notes）
+// 解密一行 entry 的敏感字段（password/username/notes/custom_fields）
 // 单条解密失败不拖垮整组：该字段置空并记录错误（可能是旧密钥加密的残留）
 async function decryptRows(rows: any[]): Promise<any[]> {
   const key = getMasterKey();
   const out: any[] = [];
   for (const r of rows) {
-    const row: any = { ...r, password: '', username: '', notes: '', totp_secret: '' };
+    const row: any = { ...r, password: '', username: '', notes: '', totp_secret: '', customFields: [] };
     let err = '';
     for (const field of ['password', 'username', 'notes', 'totp_secret'] as const) {
       try {
@@ -164,6 +173,13 @@ async function decryptRows(rows: any[]): Promise<any[]> {
         if (!err) err = `${field}=${e?.message || 'decrypt fail'}`;
         row[field] = '';
       }
+    }
+    // 自定义字段：加密 JSON
+    try {
+      const raw = r.custom_fields ? await decryptField(key as any, r.custom_fields) : '';
+      row.customFields = raw ? JSON.parse(raw) : [];
+    } catch {
+      row.customFields = [];
     }
     if (err) row.__decryptError = err;
     out.push(row);
@@ -175,27 +191,28 @@ async function decryptRows(rows: any[]): Promise<any[]> {
 export async function getEntries(folderId?: number, tagId?: number, search?: string): Promise<Entry[]> {
   let sql = `
     SELECT e.*, GROUP_CONCAT(t.name) as tag_names, GROUP_CONCAT(t.color) as tag_colors,
-           (SELECT COUNT(*) FROM attachments a WHERE a.entry_id = e.id) as attach_count
+           (SELECT COUNT(*) FROM attachments a WHERE a.entry_id = e.id) as attach_count,
+           f.name as folder_name
     FROM entries e
     LEFT JOIN entry_tags et ON e.id = et.entry_id
     LEFT JOIN tags t ON et.tag_id = t.id
+    LEFT JOIN folders f ON e.folder_id = f.id
   `;
   const params: any[] = [];
   const conditions: string[] = [];
 
-  if (folderId !== undefined) {
+  const searching = !!(search && search.trim());
+  if (folderId !== undefined && !searching) {
     conditions.push('e.folder_id = ?');
     params.push(folderId);
   }
-  if (search) {
-    // 仅明文字段在 SQL 里搜索（title/website）；加密字段在内存过滤
-    conditions.push(`(e.title LIKE ? OR e.website LIKE ?)`);
-    const like = `%${search}%`;
-    params.push(like, like);
-  }
-  if (tagId !== undefined) {
+  if (tagId !== undefined && !searching) {
     conditions.push('et.tag_id = ?');
     params.push(tagId);
+  }
+  // 搜索时加密字段（用户名/备注/自定义字段/TOTP）无法在 SQL 中匹配，故拉取全部后在内存中全字段过滤
+  if (searching) {
+    // 不加 SQL 条件，交给 filterEntriesByQuery 做全字段匹配
   }
 
   if (conditions.length > 0) {
@@ -206,18 +223,34 @@ export async function getEntries(folderId?: number, tagId?: number, search?: str
 
   const rows: any[] = await getDb().select(sql, params);
   const decrypted = await decryptRows(rows);
-  // 加密字段（username/notes）在解密后进行内存匹配
-  if (search) {
-    const needle = search.toLowerCase();
-    return decrypted.filter((e) => {
-      const titleMatch = (e.title || '').toLowerCase().includes(needle);
-      const websiteMatch = (e.website || '').toLowerCase().includes(needle);
-      const userMatch = (e.username || '').toLowerCase().includes(needle);
-      const notesMatch = (e.notes || '').toLowerCase().includes(needle);
-      return titleMatch || websiteMatch || userMatch || notesMatch;
-    });
+  if (searching) {
+    return filterEntriesByQuery(decrypted, search!.trim());
   }
   return decrypted;
+}
+
+// 全字段、多关键词(AND)内存匹配：标题/网站/用户名/备注/标签/自定义字段/TOTP/文件夹
+export function filterEntriesByQuery(entries: Entry[], rawQuery: string): Entry[] {
+  const terms = rawQuery.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return entries;
+  return entries.filter((e) => {
+    const haystacks: string[] = [
+      e.title || '',
+      e.website || '',
+      e.username || '',
+      e.notes || '',
+      e.totp_secret || '',
+      e.folder_name || '',
+      e.tag_names || '',
+    ];
+    if (e.customFields) {
+      for (const cf of e.customFields) {
+        haystacks.push(cf.key || '', cf.value || '');
+      }
+    }
+    const hay = haystacks.join('  ').toLowerCase();
+    return terms.every((t) => hay.includes(t));
+  });
 }
 
 export async function getFavorites(): Promise<Entry[]> {
@@ -245,9 +278,12 @@ export async function getEntryTags(entryId: number): Promise<number[]> {
 
 export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []): Promise<number> {
   const key = getMasterKey();
+  const cfJson = entry.customFields && entry.customFields.length
+    ? await encryptField(key as any, JSON.stringify(entry.customFields))
+    : '';
   const result = await getDb().execute(
-    `INSERT INTO entries (title, username, password, totp_secret, website, notes, icon, folder_id, is_favorite)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO entries (title, username, password, totp_secret, website, notes, icon, folder_id, is_favorite, custom_fields)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.title || '',
       entry.username ? await encryptField(key as any, entry.username) : '',
@@ -258,6 +294,7 @@ export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []):
       entry.icon || 'Lock',
       entry.folder_id || null,
       entry.is_favorite ? 1 : 0,
+      cfJson,
     ]
   );
   const entryId = Number(result.lastInsertId);
@@ -283,22 +320,38 @@ export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: nu
     }
   }
 
+  // 自定义字段：加密 JSON（若提供了则更新，未提供保持原值）
+  let cfJson: string | undefined;
+  if (entry.customFields !== undefined) {
+    cfJson = entry.customFields.length
+      ? await encryptField(key as any, JSON.stringify(entry.customFields))
+      : '';
+  }
+
+  const updateCols = [
+    'title = ?', 'username = ?', 'password = ?', 'totp_secret = ?', 'website = ?', 'notes = ?',
+    'icon = ?', 'folder_id = ?', 'is_favorite = ?', 'updated_at = datetime(\'now\', \'localtime\')',
+  ];
+  const updateParams: any[] = [
+    entry.title,
+    entry.username ? await encryptField(key as any, entry.username) : '',
+    entry.password ? await encryptField(key as any, entry.password) : '',
+    entry.totp_secret ? await encryptField(key as any, entry.totp_secret) : '',
+    entry.website,
+    entry.notes ? await encryptField(key as any, entry.notes) : '',
+    entry.icon,
+    entry.folder_id,
+    entry.is_favorite ? 1 : 0,
+  ];
+  if (cfJson !== undefined) {
+    updateCols.push('custom_fields = ?');
+    updateParams.push(cfJson);
+  }
+  updateParams.push(id);
+
   await getDb().execute(
-    `UPDATE entries SET title = ?, username = ?, password = ?, totp_secret = ?, website = ?, notes = ?, 
-     icon = ?, folder_id = ?, is_favorite = ?, updated_at = datetime('now', 'localtime')
-     WHERE id = ?`,
-    [
-      entry.title,
-      entry.username ? await encryptField(key as any, entry.username) : '',
-      entry.password ? await encryptField(key as any, entry.password) : '',
-      entry.totp_secret ? await encryptField(key as any, entry.totp_secret) : '',
-      entry.website,
-      entry.notes ? await encryptField(key as any, entry.notes) : '',
-      entry.icon,
-      entry.folder_id,
-      entry.is_favorite ? 1 : 0,
-      id,
-    ]
+    `UPDATE entries SET ${updateCols.join(', ')} WHERE id = ?`,
+    updateParams
   );
 
   if (tagIds !== undefined) {

@@ -1,39 +1,35 @@
-// 统一数据目录管理：图标/背景都存放在 dataPath 下
-// 目录结构：
-//   {dataPath}/icons/      账号图标
-//   {dataPath}/backgrounds/ 自定义背景
-// 用户可在设置中自定义 dataPath，默认是 AppData/com.fall.fallvault/media
-import { appDataDir } from '@tauri-apps/api/path';
-import { mkdir } from '@tauri-apps/plugin-fs';
-import { useAppStore } from '@/stores/appStore';
+// 统一数据目录管理：图标/背景/附件都存放在「数据文件夹」下
+//   {dataDir}/media/icons/      账号图标
+//   {dataDir}/media/backgrounds/ 自定义背景
+//   {dataDir}/attachments/       附件
+// 目录创建走 Rust 命令（std::fs），避免 fs 插件作用域限制
+import { getDataDir } from '@/lib/backupManager';
+
+async function ensureDir(dir: string): Promise<string> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('create_dir_all', { path: dir });
+  return dir;
+}
 
 export async function getDataRoot(): Promise<string> {
-  const { settings } = useAppStore.getState();
-  if (settings.dataPath && settings.dataPath.trim()) {
-    return settings.dataPath.replace(/[\\/]+$/, '');
-  }
-  const appData = await appDataDir();
-  return `${appData}\\media`;
+  return `${await getDataDir()}\\media`;
 }
 
 export async function getIconsDir(): Promise<string> {
-  const root = await getDataRoot();
-  const dir = `${root}\\icons`;
-  await mkdir(dir, { recursive: true });
-  return dir;
+  return ensureDir(`${await getDataRoot()}\\icons`);
 }
 
 export async function getBackgroundsDir(): Promise<string> {
-  const root = await getDataRoot();
-  const dir = `${root}\\backgrounds`;
-  await mkdir(dir, { recursive: true });
-  return dir;
+  return ensureDir(`${await getDataRoot()}\\backgrounds`);
+}
+
+export async function getAttachmentsDir(): Promise<string> {
+  return ensureDir(`${await getDataRoot()}\\..\\attachments`);
 }
 
 export async function ensureDataDirs(): Promise<void> {
-  const root = await getDataRoot();
-  await mkdir(`${root}\\icons`, { recursive: true });
-  await mkdir(`${root}\\backgrounds`, { recursive: true });
+  await ensureDir(`${await getDataRoot()}\\icons`);
+  await ensureDir(`${await getDataRoot()}\\backgrounds`);
 }
 
 export function isLocalMediaPath(path: string): boolean {

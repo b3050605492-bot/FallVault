@@ -9,6 +9,8 @@ import { Toast } from '@/components/Toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { PasswordGenerator } from '@/components/PasswordGenerator';
+import { SecurityAuditModal } from '@/components/SecurityAuditModal';
+import { TotpMigrationModal } from '@/components/TotpMigrationModal';
 import { TitleBar } from '@/components/TitleBar';
 import { LockScreen } from '@/components/LockScreen';
 import { ImportModal } from '@/components/ImportModal';
@@ -16,11 +18,12 @@ import { useAppStore } from '@/stores/appStore';
 import { THEMES, applyTheme } from '@/types';
 import { lockVault } from '@/lib/crypto';
 import { useAutoLock } from '@/hooks/useAutoLock';
+import { startAutoBackup, stopAutoBackup } from '@/lib/backupManager';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 function App() {
   useDatabase();
-  const { isEntryModalOpen, isSettingsOpen, isPasswordGeneratorOpen, settings } = useAppStore();
+  const { isEntryModalOpen, isSettingsOpen, isPasswordGeneratorOpen, isSecurityAuditOpen, isTotpMigrationOpen, settings } = useAppStore();
   const [locked, setLocked] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -38,13 +41,21 @@ function App() {
   // 启动时等待 LockScreen 初始化（内部检测是否有主密码）
   // locked 初始 true → 显示解锁屏；解锁后 false 显示主界面
 
-  // 监听设置面板发出的"锁定"事件
+  // 监听设置面板发出的"锁定"事件（含关闭到托盘）——先 checkpoint 落盘 WAL，再清空内存密钥
   useEffect(() => {
     const handler = () => {
+      import('@/lib/db').then((m) => m.checkpointDatabase()).catch(() => {});
       lockVault().then(() => setLocked(true)).catch(() => setLocked(true));
     };
     window.addEventListener('fallvault:lock', handler);
     return () => window.removeEventListener('fallvault:lock', handler);
+  }, []);
+
+  // 恢复备份后 reload：重置锁定状态，让 LockScreen 重新检测是否已有主密码
+  useEffect(() => {
+    const handler = () => setLocked(true);
+    window.addEventListener('fallvault:reload', handler);
+    return () => window.removeEventListener('fallvault:reload', handler);
   }, []);
 
   // 监听打开导入弹窗事件
@@ -60,7 +71,18 @@ function App() {
   };
   useAutoLock(settings.autoLockEnabled, settings.autoLockMinutes, !locked, handleAutoLock);
 
-  // 最小化即锁定（用户偏好：点最小化立刻上锁）
+  // 解锁后启动自动备份调度，锁定时停止（避免未解锁时备份空库）
+  useEffect(() => {
+    if (!locked) {
+      const s = useAppStore.getState().settings;
+      if (s.autoBackupEnabled && s.dataDir?.trim()) {
+        startAutoBackup(s.autoBackupIntervalMin);
+      }
+    } else {
+      stopAutoBackup();
+    }
+    return () => stopAutoBackup();
+  }, [locked]);
   useEffect(() => {
     const unlistenFn = getCurrentWindow().onResized(async () => {
       // 仅当窗口被最小化时锁定
@@ -110,6 +132,8 @@ function App() {
       {!locked && isEntryModalOpen && <EntryModal />}
       {!locked && isSettingsOpen && <SettingsPanel />}
       {!locked && isPasswordGeneratorOpen && <PasswordGenerator />}
+      {!locked && isSecurityAuditOpen && <SecurityAuditModal />}
+      {!locked && isTotpMigrationOpen && <TotpMigrationModal />}
       {!locked && importOpen && (
         <ImportModal
           onClose={() => setImportOpen(false)}

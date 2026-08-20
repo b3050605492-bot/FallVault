@@ -31,7 +31,9 @@ export interface Entry {
   tag_names?: string;
   tag_colors?: string;
   attach_count?: number;
+  folder_name?: string;
   password_history?: PasswordHistory[];
+  customFields?: CustomField[];
 }
 
 export interface PasswordHistory {
@@ -50,13 +52,18 @@ export interface Attachment {
   created_at: string;
 }
 
+export interface CustomField {
+  key: string;
+  value: string;
+  hidden?: boolean; // 是否作为密码隐藏显示
+}
+
 export interface AppSettings {
   language: 'zh' | 'en';
   theme: 'default' | 'sakura' | 'azure';
   glassOpacity: number;
-  dataPath: string; // 自定义数据目录（图标/背景统一存放），空 = 默认
   background: {
-    type: 'linewaves' | 'particles' | 'image' | 'video' | 'color';
+    type: 'particles' | 'sakura' | 'image' | 'video' | 'color';
     source: string;
     name?: string;
     blur: number;
@@ -66,6 +73,11 @@ export interface AppSettings {
   autoLockEnabled: boolean;
   autoLockMinutes: number;
   clipboardClearSeconds: number;
+  autoBackupEnabled: boolean;
+  autoBackupMax: number;
+  autoBackupIntervalMin: number;
+  dataDir: string; // 用户自定义数据文件夹（备份/壁纸/图标/附件统一存放）；为空则未设置（禁用自动备份与背景导入）
+  customBackgrounds: { id: string; type: 'image' | 'video'; source: string; name: string }[]; // 用户上传的自定义背景清单
 }
 
 // 三套主题定义（配色 + gradient-waves 背景色）

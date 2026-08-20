@@ -2,18 +2,23 @@ import { useState, useEffect } from 'react';
 import { X, Save, Star, Eye, EyeOff, History, ImagePlus, Globe, KeyRound, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useToastStore } from '@/stores/toastStore';
-import { createEntry, updateEntry, getPasswordHistory, getEntryTags } from '@/lib/db';
+import { createEntry, updateEntry, getPasswordHistory, getEntryTags, getAttachments, addAttachment, deleteAttachment } from '@/lib/db';
+import { encryptAttachment, decryptAttachment } from '@/lib/crypto';
+import { Paperclip, Download, Trash2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { readFile, remove, writeFile } from '@tauri-apps/plugin-fs';
+import { readFile } from '@tauri-apps/plugin-fs';
 import type { Entry } from '@/types';
 import { getPasswordStrength, generatePassword } from '@/lib/passwordUtils';
 import { SpecularButton } from '@/components/SpecularButton';
-import { getIconsDir, isLocalMediaPath } from '@/lib/mediaPaths';
+import { getIconsDir, getAttachmentsDir, isLocalMediaPath } from '@/lib/mediaPaths';
+import { writeFileBytes, removePath, readFileBytes } from '@/lib/rustFs';
+import { BUILTIN_TEMPLATES } from '@/lib/templates';
 
 export function EntryModal() {
   const { editingEntry, setEditingEntry, setIsEntryModalOpen, folders, tags, refreshAll } = useAppStore();
   const { addToast } = useToastStore();
+  const isEn = useAppStore((s) => s.settings?.language === 'en');
   const isEditing = !!editingEntry;
 
   const [form, setForm] = useState<Partial<Entry>>({
@@ -22,8 +27,11 @@ export function EntryModal() {
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [showPassword, setShowPassword] = useState(false);
   const [passwordHistory, setPasswordHistory] = useState<any[]>([]);
+  const [attachments, setAttachments] = useState<any[]>([]);
+  const [attachBusy, setAttachBusy] = useState(false);
   const [strength, setStrength] = useState<any>(null);
   const [customIcon, setCustomIcon] = useState<string | null>(null);
+  const [customFields, setCustomFields] = useState<{ key: string; value: string; hidden?: boolean }[]>([]);
   // 密码生成面板状态
   const [showGenPanel, setShowGenPanel] = useState(false);
   const [genLen, setGenLen] = useState(16);
@@ -37,13 +45,16 @@ export function EntryModal() {
     if (editingEntry) {
       setForm({ ...editingEntry });
       setCustomIcon(editingEntry.icon || null);
+      setCustomFields(editingEntry.customFields && editingEntry.customFields.length ? editingEntry.customFields.map((f) => ({ ...f })) : []);
       loadHistory(editingEntry.id);
       getEntryTags(editingEntry.id).then(setSelectedTags);
+      getAttachments(editingEntry.id).then(setAttachments);
     } else {
       setForm({
         title: '', username: '', password: '', website: '', notes: '', icon: '', folder_id: null, is_favorite: false,
       });
       setCustomIcon(null);
+      setCustomFields([]);
       setSelectedTags([]);
       setPasswordHistory([]);
       setStrength(null);
@@ -74,11 +85,11 @@ export function EntryModal() {
       const destName = `icon_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
       const destPath = `${iconsDir}` + '\\' + destName;
 
-      await writeFile(destPath, data);
+      await writeFileBytes(destPath, data);
 
       // 删除旧的本地图标文件（如果存在）
       if (customIcon && isLocalMediaPath(customIcon)) {
-        try { await remove(customIcon); } catch {}
+        try { await removePath(customIcon); } catch {}
       }
 
       setCustomIcon(destPath);
@@ -118,7 +129,7 @@ export function EntryModal() {
       if (hit) {
         // 删除旧本地图标文件（如果存在）
         if (customIcon && isLocalMediaPath(customIcon)) {
-          try { await remove(customIcon); } catch {}
+          try { await removePath(customIcon); } catch {}
         }
         setCustomIcon(hit.url);
         setForm((prev) => ({ ...prev, icon: hit.url }));
@@ -174,6 +185,72 @@ export function EntryModal() {
     ? (customIcon.startsWith('http') ? customIcon : convertFileSrc(customIcon))
     : null;
 
+  // ---- 附件：上传（加密存储）/ 下载（解密）/ 删除 ----
+  const handleAttachUpload = async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const file = await open({ multiple: false });
+    if (!file || typeof file !== 'string') return;
+    setAttachBusy(true);
+    try {
+      const data = await readFile(file);
+      const bytes = new Uint8Array(data);
+      const { encrypted } = await encryptAttachment(bytes);
+      const attDir = await getAttachmentsDir();
+      const name = file.split(/[\\/]/).pop() || 'attachment';
+      const destName = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.fa`;
+      const destPath = `${attDir}\\${destName}`;
+      await writeFileBytes(destPath, encrypted);
+
+      let entryId = editingEntry?.id;
+      if (!entryId) {
+        // 未保存的新账号：暂存状态，保存时写入
+        setAttachments((prev) => [...prev, { _pending: true, file_name: name, file_path: destPath, file_size: bytes.length }]);
+        addToast('附件已暂存，保存账号后生效', 'success');
+        setAttachBusy(false);
+        return;
+      }
+      await addAttachment(entryId, name, destPath, bytes.length);
+      setAttachments(await getAttachments(entryId));
+      addToast('附件已加密保存', 'success');
+    } catch (e) {
+      console.error('attach upload failed', e);
+      addToast('附件上传失败', 'error');
+    } finally {
+      setAttachBusy(false);
+    }
+  };
+
+  const handleAttachDownload = async (att: any) => {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const buf = await readFileBytes(att.file_path);
+      const decrypted = await decryptAttachment(new Uint8Array(buf));
+      const filePath = await save({
+        defaultPath: att.file_name,
+        filters: [{ name: 'All files', extensions: ['*'] }],
+      });
+      if (!filePath) return;
+      await writeFileBytes(filePath, decrypted);
+      addToast('附件已解密保存', 'success');
+    } catch (e) {
+      console.error('attach download failed', e);
+      addToast('附件下载失败', 'error');
+    }
+  };
+
+  const handleAttachDelete = async (att: any) => {
+    try {
+      if (att.id) {
+        await deleteAttachment(att.id);
+        await refreshAll();
+      }
+      setAttachments((prev) => prev.filter((a) => a !== att));
+      addToast('附件已删除', 'success');
+    } catch {
+      addToast('删除失败', 'error');
+    }
+  };
+
   const handleSave = async () => {
     if (!form.title?.trim()) {
       addToast('请填写标题', 'warning');
@@ -182,11 +259,19 @@ export function EntryModal() {
 
     try {
       if (isEditing && editingEntry) {
-        await updateEntry(editingEntry.id, { ...form, icon: customIcon || '' }, selectedTags);
+        await updateEntry(editingEntry.id, { ...form, icon: customIcon || '', customFields: customFields.filter(f => f.key.trim()) }, selectedTags);
         addToast('账号已更新', 'success');
       } else {
-        await createEntry({ ...form, icon: customIcon || '' }, selectedTags);
+        const newId = await createEntry({ ...form, icon: customIcon || '', customFields: customFields.filter(f => f.key.trim()) }, selectedTags);
         addToast('账号添加成功', 'success');
+        // 把暂存的附件正式写入数据库
+        const pending = attachments.filter((a) => a._pending);
+        if (pending.length > 0) {
+          for (const p of pending) {
+            await addAttachment(newId, p.file_name, p.file_path, p.file_size);
+          }
+          setAttachments(await getAttachments(newId));
+        }
       }
 
       // 保存后重置到"全部账号"视图，确保新账号立即可见
@@ -405,6 +490,66 @@ export function EntryModal() {
             <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
               placeholder="安全提问答案、备用邮箱等..." rows={3}
               className="rune-input w-full px-3 py-2.5 text-sm resize-none" />
+            {/* 模板：选择后把结构填充到备注 */}
+            <select
+              value=""
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) return;
+                const tpl = BUILTIN_TEMPLATES.find((t) => t.id === id);
+                if (tpl) {
+                  const parts: string[] = [];
+                  if (tpl.notes) parts.push(tpl.notes);
+                  const fieldLines = tpl.customFields
+                    .map((f) => `${f.key}：${f.value || ''}`)
+                    .join('\n');
+                  if (fieldLines) parts.push(fieldLines);
+                  if (parts.length) {
+                    const block = parts.join('\n');
+                    const prev = form.notes?.trim();
+                    const add = prev ? `${prev}\n\n${block}` : block;
+                    setForm((f) => ({ ...f, notes: add }));
+                  }
+                }
+                e.target.value = '';
+              }}
+              className="rune-input w-full px-3 py-2 text-xs bg-transparent mt-2"
+            >
+              <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '插入模板到备注…' : '插入模板到备注…'}</option>
+              {BUILTIN_TEMPLATES.map((tpl) => (
+                <option key={tpl.id} value={tpl.id} style={{ background: '#1A1A2E' }}>{tpl.icon} {isEn ? tpl.nameEn : tpl.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 自定义字段 */}
+          <div>
+            <label className="text-xs text-[var(--moon-faint)] mb-2 flex items-center justify-between">
+              <span>自定义字段</span>
+            </label>
+            {customFields.length > 0 && (
+              <div className="space-y-2">
+                {customFields.map((f, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input value={f.key} onChange={e => { const n = [...customFields]; n[i].key = e.target.value; setCustomFields(n); }}
+                      placeholder="字段名（如：会员ID）" className="rune-input flex-1 px-2.5 py-2 text-xs" />
+                    <div className="relative flex-[1.4]">
+                      <input type={f.hidden ? 'password' : 'text'} value={f.value}
+                        onChange={e => { const n = [...customFields]; n[i].value = e.target.value; setCustomFields(n); }}
+                        placeholder="值" className="rune-input w-full pl-2.5 pr-8 py-2 text-xs" />
+                      <button onClick={() => { const n = [...customFields]; n[i].hidden = !n[i].hidden; setCustomFields(n); }}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[var(--moon-faint)] hover:text-[var(--moon)]" title="隐藏/显示">
+                        {f.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                      </button>
+                    </div>
+                    <button onClick={() => setCustomFields(customFields.filter((_, j) => j !== i))}
+                      className="p-1.5 rounded text-[var(--moon-faint)] hover:text-[var(--danger,#D47070)]" title="删除字段">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 两步验证密钥 (TOTP) */}
@@ -441,6 +586,42 @@ export function EntryModal() {
               </div>
             </div>
           )}
+
+          {/* 附件（加密存储） */}
+          <div className="pt-1">
+            <label className="text-xs text-[var(--moon-faint)] mb-2 flex items-center gap-1.5">
+              <Paperclip size={11} /> 附件
+            </label>
+            <button
+              onClick={handleAttachUpload}
+              disabled={attachBusy}
+              className="w-full px-3 py-2 rounded-xl text-xs border border-dashed border-[rgba(192,200,216,0.3)] hover:border-[var(--mint)] text-[var(--moon-dim)] hover:text-[var(--mint)] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {attachBusy ? '上传中…' : '+ 上传附件（AES 加密存储）'}
+            </button>
+            {attachments.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {attachments.map((att, i) => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.05)] text-xs text-[var(--moon-dim)]">
+                    <Paperclip size={11} className="flex-shrink-0" style={{ color: 'var(--mint)' }} />
+                    <span className="flex-1 truncate">{att.file_name}</span>
+                    <span className="text-[10px] text-[var(--moon-faint)]">
+                      {(att.file_size / 1024).toFixed(att.file_size > 102400 ? 0 : 1)} KB
+                    </span>
+                    {att._pending && (
+                      <span className="text-[10px]" style={{ color: 'var(--warning, #D4B070)' }}>待保存</span>
+                    )}
+                    <button onClick={() => handleAttachDownload(att)} className="p-1 rounded hover:text-[var(--mint)] hover:bg-[rgba(210,210,220,0.1)]" title="下载（解密）">
+                      <Download size={12} />
+                    </button>
+                    <button onClick={() => handleAttachDelete(att)} className="p-1 rounded hover:text-[var(--danger, #D47070)] hover:bg-[rgba(212,112,112,0.1)]" title="删除">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 底部按钮 */}

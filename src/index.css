@@ -22,9 +22,9 @@
     --void: #12121E;
     --void-light: #1A1A2E;
     --void-mid: #1E1E3A;
-    --moon: #E8E8F0;
-    --moon-dim: rgba(232, 232, 240, 0.5);
-    --moon-faint: rgba(232, 232, 240, 0.2);
+    --moon: #F5F7FD;
+    --moon-dim: rgba(240, 243, 252, 0.72);
+    --moon-faint: rgba(240, 243, 252, 0.42);
     --danger: #D47070;
     --success: #7DD3C0;
     --warning: #D4B070;
@@ -33,11 +33,11 @@
     --glass-opacity: 0.65;
     --glass-alpha: 0.2;
     /* 双层玻璃背景：暗色保护层（保证文字可读）+ 白色半透明层（毛玻璃质感） */
-    --glass-bg: linear-gradient(180deg, rgba(10, 10, 20, 0.28) 0%, rgba(10, 10, 20, 0.16) 100%), rgba(255, 245, 245, var(--glass-alpha));
-    --glass-border: rgba(255, 245, 245, 0.4);
-    --glass-border-hover: rgba(255, 245, 245, 0.6);
-    --glass-blur: 6px;
-    --glass-saturate: 180%;
+    --glass-bg: linear-gradient(180deg, rgba(16, 16, 20, 0.52) 0%, rgba(18, 18, 22, 0.38) 55%, rgba(16, 16, 20, 0.46) 100%), rgba(255, 255, 255, var(--glass-alpha));
+    --glass-border: rgba(255, 255, 255, 0.4);
+    --glass-border-hover: rgba(255, 255, 255, 0.6);
+    --glass-blur: 12px;
+    --glass-saturate: 120%;
     --glass-radius: 20px;
     --glass-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
   }
@@ -75,6 +75,7 @@
     box-shadow: var(--glass-shadow, 0 15px 30px rgba(0, 0, 0, 0.2));
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
+  .rune-panel, .rune-input, .rune-btn { font-weight: 500; }
   .rune-panel:hover {
     border-color: var(--glass-border-hover);
     box-shadow: var(--glass-shadow, 0 15px 30px rgba(0, 0, 0, 0.2));
@@ -347,4 +348,16 @@
     align-items: center;
     gap: 6px;
   }
+}
+
+
+/* 全局隐藏滚动条（保留滚动功能） */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+*::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+  display: none;
 }

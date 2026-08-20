@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useToastStore } from '@/stores/toastStore';
 import { setupMasterPassword, unlockVault, hasMasterPassword, migratePlaintextToEncrypted } from '@/lib/crypto';
+import logo from '@/assets/log.png';
 
 interface LockScreenProps {
   onUnlocked: () => void;
@@ -67,6 +68,18 @@ export function LockScreen({ onUnlocked }: LockScreenProps) {
       const ok = await unlockVault(password);
       if (ok) {
         setPassword('');
+        // 完整性校验：数据库异常时提醒
+        try {
+          const { verifyIntegrity } = await import('@/lib/crypto');
+          const report = await verifyIntegrity();
+          if (!report.ok) {
+            if (report.dbError) {
+              addToast(`⚠️ 数据库完整性异常：${report.dbError}`, 'error');
+            } else if (report.corruptEntries > 0) {
+              addToast(`⚠️ 发现 ${report.corruptEntries} 条无法解密的数据（可能被篡改或密钥不匹配）`, 'warning');
+            }
+          }
+        } catch {}
         onUnlocked();
       } else {
         addToast('主密码错误', 'error');
@@ -94,12 +107,12 @@ export function LockScreen({ onUnlocked }: LockScreenProps) {
         }}
       >
         <div className="flex flex-col items-center mb-8">
-          <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-4"
-            style={{ background: 'rgba(125,211,192,0.15)', color: 'var(--mint)' }}
-          >
-            🔐
-          </div>
+          <img
+            src={logo}
+            alt="FallVault"
+            className="w-20 h-20 rounded-2xl mb-4 object-contain"
+            style={{ filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.35))' }}
+          />
           <h1 className="text-2xl font-bold" style={{ color: 'var(--moon)' }}>
             FallVault
           </h1>

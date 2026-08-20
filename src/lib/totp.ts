@@ -33,6 +33,122 @@ export function parseOtpAuth(uri: string): string | null {
   }
 }
 
+// 由 secret + 标题构建 otpauth:// URI（用于迁移/导出到其他验证器）
+export function buildOtpAuthUri(secret: string, label: string, issuer?: string): string {
+  const clean = secret.replace(/\s+/g, '').toUpperCase();
+  const enc = (s: string) => encodeURIComponent(s);
+  const base = `otpauth://totp/${enc(label || 'FallVault')}?secret=${enc(clean)}&period=30&digits=6&algorithm=SHA1`;
+  return issuer ? `${base}&issuer=${enc(issuer)}` : base;
+}
+
+// ---- Google Authenticator 批量迁移格式解析（otpauth-migration://offline?data=BASE64PROTOBUF） ----
+
+interface ProtoField { tag: number; wireType: number; value: Uint8Array | number; }
+
+function readVarint(buf: Uint8Array, pos: number): [number, number] {
+  let result = 0;
+  let shift = 0;
+  let p = pos;
+  while (p < buf.length) {
+    const byte = buf[p];
+    result |= (byte & 0x7f) << shift;
+    p++;
+    if ((byte & 0x80) === 0) break;
+    shift += 7;
+  }
+  return [result >>> 0, p];
+}
+
+function parseProto(buf: Uint8Array): ProtoField[] {
+  const fields: ProtoField[] = [];
+  let pos = 0;
+  while (pos < buf.length) {
+    let tag: number;
+    [tag, pos] = readVarint(buf, pos);
+    const fieldNo = tag >> 3;
+    const wireType = tag & 0x07;
+    if (wireType === 0) {
+      let val: number;
+      [val, pos] = readVarint(buf, pos);
+      fields.push({ tag: fieldNo, wireType, value: val });
+    } else if (wireType === 2) {
+      let len: number;
+      [len, pos] = readVarint(buf, pos);
+      const slice = buf.slice(pos, pos + len);
+      pos += len;
+      fields.push({ tag: fieldNo, wireType, value: slice });
+    } else if (wireType === 5) {
+      fields.push({ tag: fieldNo, wireType, value: buf.slice(pos, pos + 4) });
+      pos += 4;
+    } else if (wireType === 1) {
+      fields.push({ tag: fieldNo, wireType, value: buf.slice(pos, pos + 8) });
+      pos += 8;
+    } else {
+      break;
+    }
+  }
+  return fields;
+}
+
+function bytesToStr(b: Uint8Array): string {
+  let s = '';
+  for (const c of b) s += String.fromCharCode(c);
+  return s;
+}
+
+// 原始字节 → Base32（RFC 4648，无填充大写），用于 TOTP secret 存储
+function bytesToBase32(b: Uint8Array): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const byte of b) bits += byte.toString(2).padStart(8, '0');
+  let out = '';
+  for (let i = 0; i + 5 <= bits.length; i += 5) {
+    out += alphabet[parseInt(bits.slice(i, i + 5), 2)];
+  }
+  return out;
+}
+
+export interface MigratedTotp {
+  secret: string;
+  name: string;
+  issuer: string;
+}
+
+// 解析 Google 导出链接，返回所有 TOTP 条目
+export function parseGoogleMigration(uri: string): MigratedTotp[] {
+  try {
+    const u = new URL(uri);
+    if (u.protocol !== 'otpauth-migration:') return [];
+    const data = u.searchParams.get('data');
+    if (!data) return [];
+    // URL-safe base64 解码
+    let b64 = data.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+    const top = parseProto(bytes);
+    const out: MigratedTotp[] = [];
+    for (const f of top) {
+      if (f.tag !== 1 || !(f.value instanceof Uint8Array)) continue; // otp_parameters
+      const inner = parseProto(f.value as Uint8Array);
+      let secret = '';
+      let name = '';
+      let issuer = '';
+      for (const g of inner) {
+        if (g.tag === 1 && g.value instanceof Uint8Array) secret = bytesToBase32(g.value as Uint8Array);
+        else if (g.tag === 2 && g.value instanceof Uint8Array) name = bytesToStr(g.value as Uint8Array);
+        else if (g.tag === 3 && g.value instanceof Uint8Array) issuer = bytesToStr(g.value as Uint8Array);
+      }
+      if (secret) out.push({ secret: secret.trim().toUpperCase(), name, issuer });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 async function hmacSha1(key: Uint8Array, msg: Uint8Array): Promise<Uint8Array> {
   const cryptoKey = await crypto.subtle.importKey(
     'raw', key as unknown as BufferSource, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']

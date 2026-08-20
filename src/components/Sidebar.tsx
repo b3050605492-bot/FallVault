@@ -2,11 +2,12 @@ import { useState } from 'react';
 import {
   Folder, Inbox, Star, Hash, ChevronRight, ChevronLeft,
   Plus, Settings, Lock, Gamepad2, MessageCircle, Landmark,
-  Briefcase, Sparkles, Edit3, Trash2, Check
+  Briefcase, Sparkles, Edit3, Trash2, Check, ShieldAlert
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useToastStore } from '@/stores/toastStore';
 import { createFolder, updateFolder, deleteFolder, createTag, deleteTag } from '@/lib/db';
+import { runSecurityAudit } from '@/lib/securityAudit';
 import { ShinyText } from '@/components/ShinyText';
 import { StrokeText } from '@/components/StrokeText';
 import { ClickSpark } from '@/components/ClickSpark';
@@ -18,12 +19,18 @@ const iconMap: Record<string, React.ElementType> = {
 
 export function Sidebar() {
   const {
-    folders, tags, selectedFolderId, selectedTagId, favorites,
+    folders, tags, entries, selectedFolderId, selectedTagId, favorites,
     isSidebarOpen, setIsSidebarOpen, setSelectedFolderId,
     setSelectedTagId, setSearchQuery, setIsSettingsOpen,
-    setIsPasswordGeneratorOpen, refreshAll, setConfirmDialog
+    setIsPasswordGeneratorOpen, setIsSecurityAuditOpen, refreshAll, setConfirmDialog
   } = useAppStore();
   const { addToast } = useToastStore();
+
+  const isEn = useAppStore((s) => s.settings.language === 'en');
+
+  const auditIssues = (() => {
+    try { return runSecurityAudit(entries).issuesCount; } catch { return 0; }
+  })();
 
   const [newFolderName, setNewFolderName] = useState('');
   const [isAddingFolder, setIsAddingFolder] = useState(false);
@@ -150,6 +157,17 @@ export function Sidebar() {
           </button>
 
           <div className="w-6 h-px bg-[rgba(192,200,216,0.1)] mt-auto" />
+
+          <button
+            onClick={() => setIsSecurityAuditOpen(true)}
+            className="relative w-10 h-10 rounded-xl flex items-center justify-center text-[var(--moon-dim)] hover:text-[var(--mint)] hover:bg-[rgba(210,210,220,0.1)] transition-all mb-2"
+            title={isEn ? 'Security Audit' : '安全审计'}
+          >
+            <ShieldAlert size={16} />
+            {auditIssues > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full" style={{ background: '#D47070' }} />
+            )}
+          </button>
 
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -293,6 +311,7 @@ export function Sidebar() {
 
       {/* 底部 */}
       <div className="p-2 pb-3 pt-3 border-t border-[rgba(192,200,216,0.06)] space-y-0.5 flex-shrink-0">
+        <SidebarItem onClick={() => setIsSecurityAuditOpen(true)} icon={<ShieldAlert size={15} />} label={isEn ? 'Security Audit' : '安全审计'} badge={auditIssues || undefined} badgeColor={auditIssues ? '#D47070' : undefined} />
         <SidebarItem onClick={() => setIsPasswordGeneratorOpen(true)} icon={<Sparkles size={15} />} label="密码生成器" />
         <SidebarItem onClick={() => setIsSettingsOpen(true)} icon={<Settings size={15} />} label="设置" />
       </div>
@@ -300,14 +319,14 @@ export function Sidebar() {
   );
 }
 
-function SidebarItem({ active, onClick, icon, label, badge }: {
-  active?: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: number;
+function SidebarItem({ active, onClick, icon, label, badge, badgeColor }: {
+  active?: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: number; badgeColor?: string;
 }) {
   return (
     <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 ${active ? 'bg-[rgba(210,210,220,0.1)] text-[var(--mint)] shadow-[0_0_12px_rgba(210,210,220,0.1)]' : 'text-[var(--moon-dim)] hover:text-[var(--moon)] hover:bg-[rgba(192,200,216,0.05)]'}`}>
       <span className={active ? 'text-[var(--mint)]' : 'text-[var(--moon-faint)]'}>{icon}</span>
-      <span className="text-[13px] font-medium flex-1 text-left">{label}</span>
-      {badge !== undefined && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[rgba(210,210,220,0.15)] text-[var(--mint)] font-semibold">{badge}</span>}
+      <span className="text-[13px] font-semibold flex-1 text-left">{label}</span>
+      {badge !== undefined && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${badgeColor || 'var(--mint)'}22`, color: badgeColor || 'var(--mint)' }}>{badge}</span>}
     </button>
   );
 }

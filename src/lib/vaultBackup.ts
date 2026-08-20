@@ -1,7 +1,7 @@
 // .fvault 加密备份：导出（含附件）与恢复
 // 整包格式：AES-256-GCM 加密的 JSON（含全部条目、分类、标签、附件 base64）
 // 备份密码通过 PBKDF2(15万次) 派生密钥 → 随机 data key 加密数据 → data key 抛加密存文件头
-import { readFile, writeFile, mkdir } from '@tauri-apps/plugin-fs';
+import { writeFile } from '@tauri-apps/plugin-fs';
 import Database from '@tauri-apps/plugin-sql';
 import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
 
@@ -98,12 +98,11 @@ export function backupStamp(): string {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-// ============ 导出 ============
-export async function exportVault(
+// 导出：返回加密后的文件内容字符串 + 计数（不写盘，由调用方决定如何落盘）
+export async function buildBackupContent(
   password: string,
-  savePath: string,
   includeAttachments: boolean = true,
-): Promise<BackupResult> {
+): Promise<{ content: string; entryCount: number; attachmentCount: number }> {
   const masterKey = getMasterKey();
   if (!masterKey) throw new Error('vault locked');
 
@@ -125,6 +124,7 @@ export async function exportVault(
 
   // 附件读取（base64）
   const attachByEntry = new Map<number, { name: string; data_b64: string; size: number }[]>();
+  let attachmentCount = 0;
   if (includeAttachments) {
     const { readFile } = await import('@tauri-apps/plugin-fs');
     for (const a of attachRows) {
@@ -135,6 +135,7 @@ export async function exportVault(
         const arr = attachByEntry.get(a.entry_id) || [];
         arr.push(row);
         attachByEntry.set(a.entry_id, arr);
+        attachmentCount++;
       } catch {
         // 附件文件可能已丢失，跳过
       }
@@ -162,7 +163,7 @@ export async function exportVault(
       created_at: e.created_at || '',
       updated_at: e.updated_at || '',
       tag_ids: etMap.get(e.id) || [],
-      attachments: includeAttachments ? (attachByEntry.get(e.id) || []) : undefined,
+      attachments: includeAttachments ? (attachByEntry.get(e.entry_id) || []) : undefined,
     });
   }
 
@@ -198,9 +199,17 @@ export async function exportVault(
     created: data.exportedAt,
   });
 
-  await writeFile(savePath, new TextEncoder().encode(fileContent));
-  const attCount = entries.reduce((s, e) => s + (e.attachments?.length || 0), 0);
-  return { exported: entries.length, attachments: attCount };
+  return { content: fileContent, entryCount: entries.length, attachmentCount };
+}
+
+export async function exportVault(
+  password: string,
+  savePath: string,
+  includeAttachments: boolean = true,
+): Promise<BackupResult> {
+  const { content, entryCount, attachmentCount } = await buildBackupContent(password, includeAttachments);
+  await writeFile(savePath, new TextEncoder().encode(content));
+  return { exported: entryCount, attachments: attachmentCount };
 }
 
 // ============ 恢复 ============
@@ -213,8 +222,18 @@ export interface RestoreResult {
 }
 
 export async function restoreVault(password: string, filePath: string): Promise<RestoreResult> {
+  const { readFile } = await import('@tauri-apps/plugin-fs');
   const buf = await readFile(filePath);
   const text = new TextDecoder().decode(new Uint8Array(buf));
+  return applyBackupContent(password, text);
+}
+
+// 与 restoreVault 相同，但接收已读取的文件内容字符串（用于走 Rust 读取的自动备份恢复）
+export async function restoreVaultFromContent(password: string, text: string): Promise<RestoreResult> {
+  return applyBackupContent(password, text);
+}
+
+async function applyBackupContent(password: string, text: string): Promise<RestoreResult> {
   let header: any;
   try {
     header = JSON.parse(text);
@@ -253,6 +272,11 @@ export async function restoreVault(password: string, filePath: string): Promise<
   if (!masterKey) throw new Error('vault locked');
 
   const enc = (v: string) => (v ? encryptField(masterKey as any, v) : '');
+  const dec = async (v: string) => {
+    if (!v) return '';
+    if (!isEncryptedField(v)) return v;
+    try { return await decryptField(masterKey as any, v); } catch { return ''; }
+  };
 
   // 3. 写入分类/标签（避免重复）
   const folderIdMap = new Map<number, number>();
@@ -283,15 +307,27 @@ export async function restoreVault(password: string, filePath: string): Promise<
     }
   }
 
-  // 4. 写入条目（标题+账号+网站 相同判定重复 → 跳过）
+  // 4. 写入条目（标题+账号+网站+密码 明文相同判定重复 → 跳过）
+  // 注意：加密字段使用随机 IV，密文每次不同，必须用明文比对
+  const existing: any[] = await d.select('SELECT id, title, username, password, website FROM entries');
+  const existingPlain = await Promise.all(existing.map(async (e) => ({
+    title: e.title || '',
+    username: await dec(e.username || ''),
+    password: await dec(e.password || ''),
+    website: e.website || '',
+  })));
+  const isDup = (e: any) =>
+    existingPlain.some((x) =>
+      x.title === e.title &&
+      x.username === (e.username || '') &&
+      x.password === (e.password || '') &&
+      x.website === (e.website || '')
+    );
+
   let newEntries = 0;
   let skipped = 0;
   for (const e of data.entries) {
-    const dup: any[] = await d.select(
-      'SELECT id FROM entries WHERE title = ? AND username = ? AND password = ?',
-      [e.title, await enc(e.username), await enc(e.password)]
-    );
-    if (dup.length > 0) {
+    if (isDup(e)) {
       skipped++;
       continue;
     }
@@ -317,13 +353,12 @@ export async function restoreVault(password: string, filePath: string): Promise<
 
     // 附件恢复
     if (e.attachments && e.attachments.length > 0) {
-      const { appDataDir } = await import('@tauri-apps/api/path');
-      const dataDir = await appDataDir();
-      const attDir = `${dataDir}\\attachments`;
-      try { await mkdir(attDir, { recursive: true }); } catch {}
+      const { getAttachmentsDir } = await import('@/lib/mediaPaths');
+      const { writeFileBytes } = await import('@/lib/rustFs');
+      const attDir = await getAttachmentsDir();
       for (const att of e.attachments) {
         const destPath = `${attDir}\\att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${att.name.replace(/[\\/:*?"<>|]/g, '_')}`;
-        await writeFile(destPath, unb64(att.data_b64));
+        await writeFileBytes(destPath, unb64(att.data_b64));
         await d.execute(
           'INSERT INTO attachments (entry_id, file_name, file_path, file_size) VALUES (?, ?, ?, ?)',
           [newEntryId, att.name, destPath, att.size]

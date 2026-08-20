@@ -112,7 +112,7 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
       <GlareHover glareColor="rgba(210,210,220, 0.08)" glareSize={250}>
         <ClickSpark sparkColor="#7DD3C0" sparkCount={8}>
           <div
-            className="rune-panel rune-card p-5 relative overflow-hidden"
+            className="rune-panel rune-card p-4 relative overflow-hidden"
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
           >
@@ -127,59 +127,59 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
             />
 
             {/* 头部 */}
-            <div className="flex items-start gap-3 pr-10">
-              <div className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 overflow-hidden transition-all duration-300"
+            <div className="flex items-start gap-2.5 pr-9">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden transition-all duration-300"
                 style={{
                   background: hasCustomIcon ? 'transparent' : 'var(--mint-dim)',
-                  boxShadow: isHovered ? '0 0 16px rgba(210,210,220, 0.2)' : 'none',
+                  boxShadow: isHovered ? '0 0 12px rgba(210,210,220, 0.2)' : 'none',
                 }}
               >
                 {customIconUrl && !customError.error ? (
                   <img src={customIconUrl} alt="" className="w-full h-full object-cover" onError={customError.onError} />
                 ) : faviconUrl && !faviconError.error ? (
-                  <img src={faviconUrl} alt="" className="w-7 h-7 object-contain" onError={faviconError.onError} />
+                  <img src={faviconUrl} alt="" className="w-5 h-5 object-contain" onError={faviconError.onError} />
                 ) : (
-                  <Lock size={18} style={{ color: 'var(--mint)' }} />
+                  <Lock size={15} style={{ color: 'var(--mint)' }} />
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="font-semibold text-[var(--moon)] truncate text-[15px]">{entry.title}</h3>
+                <h3 className="font-semibold text-[var(--moon)] truncate text-[14px] leading-tight">{entry.title}</h3>
                 {entry.website && (
                   <a href={entry.website.startsWith('http') ? entry.website : `https://${entry.website}`}
                     target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-[var(--moon-faint)] hover:text-[var(--mint)] flex items-center gap-1 truncate transition-colors mt-0.5"
+                    className="text-[11px] text-[var(--moon-dim)] hover:text-[var(--mint)] flex items-center gap-1 truncate transition-colors mt-0.5 font-medium"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {entry.website}
-                    <ExternalLink size={10} />
+                    <ExternalLink size={9} />
                   </a>
                 )}
               </div>
             </div>
 
             {/* 账号密码 */}
-            <div className="mt-4 space-y-2.5">
+            <div className="mt-3 space-y-1.5">
               <div className="flex items-center gap-2 group">
-                <span className="text-[11px] text-[var(--moon-faint)] w-10 font-medium uppercase tracking-wider">账号</span>
-                <code className="flex-1 text-sm text-[var(--moon-dim)] truncate font-mono">{entry.username}</code>
+                <span className="text-[10px] text-[var(--moon-dim)] w-9 font-semibold uppercase tracking-wider">账号</span>
+                <code className="flex-1 text-[13px] text-[var(--moon)] truncate font-mono font-semibold">{entry.username}</code>
                 <button onClick={(e) => { e.stopPropagation(); handleCopy(entry.username, 'username'); }}
-                  className="opacity-0 group-hover:opacity-100 text-[var(--moon-faint)] hover:text-[var(--mint)] transition-all p-1">
-                  <Copy size={13} />
+                  className="opacity-0 group-hover:opacity-100 text-[var(--moon-dim)] hover:text-[var(--mint)] transition-all p-1">
+                  <Copy size={12} />
                 </button>
                 {copiedField === 'username' && <span className="text-[10px] text-[var(--mint)]">已复制</span>}
               </div>
 
               <div className="flex items-center gap-2 group">
-                <span className="text-[11px] text-[var(--moon-faint)] w-10 font-medium uppercase tracking-wider">密码</span>
-                <code className="flex-1 text-sm text-[var(--moon-dim)] truncate font-mono">
+                <span className="text-[10px] text-[var(--moon-dim)] w-9 font-semibold uppercase tracking-wider">密码</span>
+                <code className="flex-1 text-[13px] text-[var(--moon)] truncate font-mono font-semibold">
                   {showPassword ? entry.password : '•'.repeat(Math.min(entry.password?.length || 8, 16))}
                 </code>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={(e) => { e.stopPropagation(); setShowPassword(!showPassword); }} className="text-[var(--moon-faint)] hover:text-[var(--moon)] p-1">
-                    {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                    {showPassword ? <EyeOff size={12} /> : <Eye size={12} />}
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); handleCopy(entry.password || '', 'password'); }} className="text-[var(--moon-faint)] hover:text-[var(--mint)] p-1">
-                    <Copy size={13} />
+                    <Copy size={12} />
                   </button>
                 </div>
                 {copiedField === 'password' && <span className="text-[10px] text-[var(--mint)]">已复制</span>}
@@ -189,7 +189,7 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
             {/* TOTP 验证码 */}
             {entry.totp_secret && totp && (
               <div className="flex items-center gap-2 mt-2 group">
-                <span className="text-[11px] text-[var(--moon-faint)] w-10 font-medium uppercase tracking-wider">2FA</span>
+                <span className="text-[11px] text-[var(--moon-dim)] w-10 font-semibold uppercase tracking-wider">2FA</span>
                 <code className="flex-1 text-sm font-mono tracking-[0.25em]" style={{ color: 'var(--mint)' }}>
                   {totp.code}
                 </code>
@@ -205,7 +205,7 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); handleCopy(totp.code, 'totp'); }}
-                  className="opacity-0 group-hover:opacity-100 text-[var(--moon-faint)] hover:text-[var(--mint)] transition-all p-1"
+                  className="opacity-0 group-hover:opacity-100 text-[var(--moon-dim)] hover:text-[var(--mint)] transition-all p-1"
                   title={isEn ? 'Copy code' : '复制验证码'}
                 >
                   <Copy size={13} />
@@ -213,6 +213,29 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
                 {copiedField === 'totp' && <span className="text-[10px] text-[var(--mint)]">已复制</span>}
               </div>
             )}
+
+            {/* 自定义字段（固定高度占位，保证有/无字段卡片高度一致） */}
+            <div className="mt-2.5 min-h-[34px]">
+              {entry.customFields && entry.customFields.length > 0 && (
+                <div className="space-y-2">
+                  {entry.customFields.slice(0, 2).map((f, i) => (
+                    <div key={i} className="flex items-center gap-2 group">
+                      <span className="text-[11px] text-[var(--moon-dim)] w-16 truncate font-semibold">{f.key}</span>
+                      <code className="flex-1 text-sm text-[var(--moon)] truncate font-mono font-semibold">
+                        {f.hidden ? '•'.repeat(Math.min((f.value?.length || 8), 16)) : f.value}
+                      </code>
+                      <button onClick={(e) => { e.stopPropagation(); handleCopy(f.value || '', 'custom'); }}
+                        className="opacity-0 group-hover:opacity-100 text-[var(--moon-dim)] hover:text-[var(--mint)] transition-all p-1" title="复制">
+                        <Copy size={13} />
+                      </button>
+                    </div>
+                  ))}
+                  {entry.customFields.length > 2 && (
+                    <div className="text-[11px] text-[var(--moon-faint)]">+{entry.customFields.length - 2} 个自定义字段</div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* 标签 */}
             {tagNames.length > 0 && (
@@ -231,18 +254,18 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
             )}
 
             {/* 底部操作 */}
-            <div className={`flex items-center gap-1 mt-4 pt-3 border-t border-[rgba(192,200,216,0.06)] transition-all duration-300 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
-              <button onClick={handleEdit} className="flex items-center gap-1.5 text-xs text-[var(--moon-faint)] hover:text-[var(--mint)] px-2 py-1 rounded-lg hover:bg-[rgba(210,210,220,0.08)] transition-all">
+            <div className={`flex items-center gap-1 mt-3 pt-2.5 border-t border-[rgba(192,200,216,0.06)] transition-all duration-300 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
+              <button onClick={handleEdit} className="flex items-center gap-1.5 text-xs text-[var(--moon-dim)] hover:text-[var(--mint)] px-2 py-1 rounded-lg hover:bg-[rgba(210,210,220,0.08)] transition-all font-semibold">
                 <Edit2 size={13} /> 编辑
               </button>
-              <button onClick={handleDelete} className="flex items-center gap-1.5 text-xs text-[var(--moon-faint)] hover:text-[var(--danger)] ml-auto px-2 py-1 rounded-lg hover:bg-[rgba(212,112,112,0.08)] transition-all">
+              <button onClick={handleDelete} className="flex items-center gap-1.5 text-xs text-[var(--moon-dim)] hover:text-[var(--danger)] ml-auto px-2 py-1 rounded-lg hover:bg-[rgba(212,112,112,0.08)] transition-all font-semibold">
                 <Trash2 size={13} /> 删除
               </button>
             </div>
 
             {/* 收藏星 */}
             <button onClick={handleToggleFavorite}
-              className={`absolute top-4 right-4 transition-all p-1.5 rounded-lg ${entry.is_favorite ? 'text-[var(--mint)]' : 'text-[var(--moon-faint)] hover:text-[var(--moon)]'}`}>
+              className={`absolute top-4 right-4 transition-all p-1.5 rounded-lg ${entry.is_favorite ? 'text-[var(--mint)]' : 'text-[var(--moon-dim)] hover:text-[var(--moon)]'}`}>
               <Star size={17} fill={entry.is_favorite ? 'currentColor' : 'none'} />
             </button>
 

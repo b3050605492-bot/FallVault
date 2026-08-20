@@ -9,11 +9,14 @@
     "dialog:default",
     "fs:default",
     "fs:allow-app-write-recursive",
-    "fs:allow-remove",
     "fs:allow-copy-file",
     "fs:allow-read-dir",
+    "fs:allow-stat",
     "fs:allow-read-file",
     "fs:allow-write-file",
+    { "identifier": "fs:allow-mkdir", "allow": [{ "path": "$EXE/**" }] },
+    { "identifier": "fs:allow-create", "allow": [{ "path": "$EXE/**" }] },
+    "fs:scope-exe-recursive",
     {
       "identifier": "fs:allow-write-file",
       "allow": [

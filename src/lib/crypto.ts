@@ -4,6 +4,8 @@ import Database from '@tauri-apps/plugin-sql';
 
 // 内存中的主密钥（解锁后持有，锁定后清空）
 let masterKey: CryptoKey | null = null;
+// 内存中的主密码明文（仅用于自动备份时加密 .fvault，锁定后清空）
+let masterPassword: string | null = null;
 
 // 配置常量
 const PBKDF2_ITERATIONS = 150_000;
@@ -126,6 +128,10 @@ export function getMasterKey(): CryptoKey | null {
   return masterKey;
 }
 
+export function getMasterPassword(): string | null {
+  return masterPassword;
+}
+
 export function isLocked(): boolean {
   return masterKey === null;
 }
@@ -142,6 +148,7 @@ export async function setupMasterPassword(password: string): Promise<void> {
   const salt = randomBytes(SALT_LENGTH);
   const key = await deriveKey(password, salt);
   masterKey = key;
+  masterPassword = password;
 
   // 存校验密文：加密固定文本，解锁时能解密 = 密码正确
   const verifier = await encryptField(key, VERIFY_TEXT);
@@ -161,6 +168,7 @@ export async function unlockVault(password: string): Promise<boolean> {
     const decrypted = await decryptField(key, verifier);
     if (decrypted === VERIFY_TEXT) {
       masterKey = key;
+      masterPassword = password;
       return true;
     }
     return false;
@@ -173,6 +181,7 @@ export async function unlockVault(password: string): Promise<boolean> {
 // 锁定：清空内存密钥
 export async function lockVault(): Promise<void> {
   masterKey = null;
+  masterPassword = null;
 }
 
 // 修改主密码（需已解锁）——无损版：先把全部数据用旧密钥解密，再用新密钥重新加密写回
@@ -239,6 +248,7 @@ export async function changeMasterPassword(newPassword: string): Promise<void> {
   await metaSet('master_salt', bytesToB64(salt));
   await metaSet('master_verifier', verifier);
   masterKey = newKey;
+  masterPassword = newPassword;
 }
 
 // 首次设置主密码后：把数据库里已有的明文数据加密写回（数据迁移）
@@ -288,4 +298,94 @@ export async function migratePlaintextToEncrypted(): Promise<number> {
     }
   }
   return migrated;
+}
+
+
+
+
+// ================= 数据完整性校验 =================
+// 1) SQLite 物理完整性（PRAGMA integrity_check）
+// 2) 全部条目解密健康检查（统计损坏/解不开的记录）
+
+export interface IntegrityReport {
+  ok: boolean;
+  dbError?: string;
+  corruptEntries: number;
+  checkedEntries: number;
+}
+
+export async function verifyIntegrity(): Promise<IntegrityReport> {
+  const report: IntegrityReport = { ok: true, corruptEntries: 0, checkedEntries: 0 };
+  try {
+    const d = await Database.load('sqlite:fallvault.db');
+    // 1) SQLite 物理完整性检查
+    const rows: any[] = await d.select('PRAGMA integrity_check');
+    const result = rows?.[0]?.['integrity_check'] ?? rows?.[0]?.integrity_check ?? rows?.[0]?.toString?.() ?? '';
+    if (result !== 'ok') {
+      report.ok = false;
+      report.dbError = String(result);
+    }
+    // 2) 解密健康检查（仅已解锁）
+    if (masterKey) {
+      const entries: any[] = await d.select('SELECT count(*) as n FROM entries');
+      const total = Number(entries?.[0]?.n ?? 0);
+      report.checkedEntries = total;
+      const all: any[] = await d.select('SELECT id, username, password, notes, totp_secret FROM entries LIMIT 500');
+      let corrupt = 0;
+      for (const r of all) {
+        for (const field of ['username', 'password', 'notes', 'totp_secret']) {
+          const v = r[field];
+          if (v && isEncryptedField(v)) {
+            try {
+              const dec = await decryptField(masterKey, v);
+              if (dec === undefined) corrupt++;
+            } catch {
+              corrupt++;
+            }
+          }
+        }
+      }
+      report.corruptEntries = corrupt;
+      if (corrupt > 0) report.ok = false;
+    }
+  } catch (e: any) {
+    report.ok = false;
+    report.dbError = String(e?.message || e);
+  }
+  return report;
+}
+
+
+// ================= 附件加密 =================
+// 附件文件内容用主密钥 AES-GCM 加密存储（.fa 后缀），读取时解密
+export async function encryptAttachment(bytes: Uint8Array): Promise<{ encrypted: Uint8Array; meta: string }> {
+  const key = masterKey;
+  if (!key) throw new Error('vault locked');
+  const iv = randomBytes(IV_LENGTH);
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as unknown as BufferSource },
+    key,
+    bytes as unknown as BufferSource
+  );
+  // 加密文件格式：iv(12) + ct
+  const out = new Uint8Array(iv.length + ct.byteLength);
+  out.set(iv, 0);
+  out.set(new Uint8Array(ct), iv.length);
+  // meta: 加密参数记录（当前无额外参数，保留结构便于未来扩展）
+  const meta = bytesToB64(iv);
+  return { encrypted: out, meta };
+}
+
+export async function decryptAttachment(encryptedBytes: Uint8Array): Promise<Uint8Array> {
+  const key = masterKey;
+  if (!key) throw new Error('vault locked');
+  if (encryptedBytes.length < IV_LENGTH) throw new Error('bad attachment');
+  const iv = encryptedBytes.slice(0, IV_LENGTH);
+  const ct = encryptedBytes.slice(IV_LENGTH);
+  const dec = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv as unknown as BufferSource },
+    key,
+    ct as unknown as BufferSource
+  );
+  return new Uint8Array(dec);
 }

@@ -34,12 +34,21 @@ export function EntryList() {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-20">
-      {displayEntries.map((entry, i) => (
-        <div key={entry.id} className="fade-up" style={{ animationDelay: `${i * 0.05}s`, animationFillMode: 'both' }}>
-          <EntryCard entry={entry} index={i} />
+    <div>
+      {searchQuery && (
+        <div className="text-sm text-[var(--moon-faint)] px-1 pb-3">
+          {displayEntries.length > 0
+            ? `找到 ${displayEntries.length} 个匹配结果`
+            : '没有找到匹配的账号'}
         </div>
-      ))}
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-20">
+        {displayEntries.map((entry, i) => (
+          <div key={entry.id} className="fade-up" style={{ animationDelay: `${i * 0.05}s`, animationFillMode: 'both' }}>
+            <EntryCard entry={entry} index={i} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

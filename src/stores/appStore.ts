@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Entry, Folder, Tag, AppSettings, ThemeDef } from '@/types';
 import { THEMES, applyTheme } from '@/types';
+import { SHIRO_VIDEO } from '@/lib/constants';
 
 interface AppState {
   // Data
@@ -18,8 +19,11 @@ interface AppState {
   isSidebarOpen: boolean;
   isEntryModalOpen: boolean;
   editingEntry: Entry | null;
+  templatePrefill: { title: string; website: string; notes: string; customFields: any[] } | null;
   isSettingsOpen: boolean;
   isPasswordGeneratorOpen: boolean;
+  isSecurityAuditOpen: boolean;
+  isTotpMigrationOpen: boolean;
   confirmDialog: {
     open: boolean;
     title?: string;
@@ -47,8 +51,11 @@ interface AppState {
   setIsSidebarOpen: (open: boolean) => void;
   setIsEntryModalOpen: (open: boolean) => void;
   setEditingEntry: (entry: Entry | null) => void;
+  setTemplatePrefill: (prefill: { title: string; website: string; notes: string; customFields: any[] } | null) => void;
   setIsSettingsOpen: (open: boolean) => void;
   setIsPasswordGeneratorOpen: (open: boolean) => void;
+  setIsSecurityAuditOpen: (open: boolean) => void;
+  setIsTotpMigrationOpen: (open: boolean) => void;
   setConfirmDialog: (dialog: Partial<AppState['confirmDialog']>) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
   refreshAll: () => Promise<void>;
@@ -58,17 +65,22 @@ const defaultSettings: AppSettings = {
   language: 'zh',
   theme: 'default',
   glassOpacity: 0.65,
-  dataPath: '',
   background: {
-    type: 'linewaves',
-    source: '',
+    type: 'video',
+    source: SHIRO_VIDEO,
+    name: '白凪 shiro',
     blur: 0,
     opacity: 1,
-    darkOverlay: 0.25,
+    darkOverlay: 0.45,
   },
   autoLockEnabled: true,
   autoLockMinutes: 5,
   clipboardClearSeconds: 30,
+  autoBackupEnabled: true,
+  autoBackupMax: 5,
+  autoBackupIntervalMin: 60,
+  dataDir: '',
+  customBackgrounds: [],
 };
 
 // 从 localStorage 恢复设置
@@ -79,7 +91,7 @@ function loadSettings(): AppSettings {
       const saved = JSON.parse(raw);
       return { ...defaultSettings, ...saved, background: { ...defaultSettings.background, ...(saved.background || {}) } };
     }
-  } catch {}
+  } catch { }
   return defaultSettings;
 }
 
@@ -98,8 +110,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   isSidebarOpen: true,
   isEntryModalOpen: false,
   editingEntry: null,
+  templatePrefill: null,
   isSettingsOpen: false,
   isPasswordGeneratorOpen: false,
+  isSecurityAuditOpen: false,
+  isTotpMigrationOpen: false,
   confirmDialog: { open: false },
   settings: initialSettings,
 
@@ -115,8 +130,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   setIsSidebarOpen: (open) => set({ isSidebarOpen: open }),
   setIsEntryModalOpen: (open) => set({ isEntryModalOpen: open }),
   setEditingEntry: (entry) => set({ editingEntry: entry }),
+  setTemplatePrefill: (prefill) => set({ templatePrefill: prefill }),
   setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
   setIsPasswordGeneratorOpen: (open) => set({ isPasswordGeneratorOpen: open }),
+  setIsSecurityAuditOpen: (open) => set({ isSecurityAuditOpen: open }),
+  setIsTotpMigrationOpen: (open) => set({ isTotpMigrationOpen: open }),
   setConfirmDialog: (dialog) => set({ confirmDialog: { ...get().confirmDialog, ...dialog } }),
   updateSettings: (partial) => {
     const next = { ...get().settings, ...partial };

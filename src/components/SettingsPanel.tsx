@@ -1,18 +1,19 @@
 import { useAppStore } from '@/stores/appStore';
 import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
-import { X, Palette, Languages, GlassWater, Waves, Sparkles, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save } from 'lucide-react';
+import { BUILTIN_WALLPAPERS } from '@/lib/constants';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone } from 'lucide-react';
 import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
-import { convertFileSrc } from '@tauri-apps/api/core';
-import { copyFile, readDir, readTextFile } from '@tauri-apps/plugin-fs';
+import { copyFile, removePath } from '@/lib/rustFs';
 import { getBackgroundsDir } from '@/lib/mediaPaths';
 import { useToastStore } from '@/stores/toastStore';
-import { useState } from 'react';
-import { detectWallpaperFolder, VIDEO_EXTS } from '@/lib/wallpaper';
+import { useState, useEffect } from 'react';
+import { createBackup, listBackups, getBackupDir, getDataDir, BackupInfo } from '@/lib/backupManager';
 
 export function SettingsPanel() {
-  const { settings, updateSettings, setIsSettingsOpen } = useAppStore();
+  const { settings, updateSettings, setIsSettingsOpen, setIsTotpMigrationOpen } = useAppStore();
   const { addToast } = useToastStore();
   const t = (k: LangKey) => translate(settings.language, k);
   const isEn = settings.language === 'en';
@@ -24,60 +25,52 @@ export function SettingsPanel() {
   const [showNewPwd, setShowNewPwd] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [backupAction, setBackupAction] = useState<'export' | 'import' | null>(null);
+  const [restoreFilePath, setRestoreFilePath] = useState<string | null>(null);
   const [backupPwd, setBackupPwd] = useState('');
   const [backupPwd2, setBackupPwd2] = useState('');
   const [backupBusy, setBackupBusy] = useState(false);
+  const [integrityChecking, setIntegrityChecking] = useState(false);
+  const [activeSection, setActiveSection] = useState<'basic' | 'appearance'>('appearance');
+  const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [backupDir, setBackupDir] = useState<string>('');
+  const [dataDir, setDataDir] = useState<string>('');
 
-  const setBackground = (type: 'linewaves' | 'particles') => {
-    updateSettings({ background: { ...settings.background, type } });
+  // 用系统文件管理器打开文件夹（Rust 命令）
+  const openFolder = async (path: string) => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('open_folder', { path });
+    } catch (e) {
+      console.error('open folder failed', e);
+    }
   };
 
-  // 导入 Wallpaper Engine 壁纸文件夹（自动识别主媒体文件）
-  const handleImportFolder = async () => {
-    try {
-      const folder = await open({
-        multiple: false,
-        directory: true,
-      });
-      if (!folder || typeof folder !== 'string') return;
+  const refreshBackups = async () => {
+    setBackups(await listBackups());
+  };
+  const refreshBackupDir = async () => setBackupDir(await getBackupDir());
+  // 进入设置时刷新一次备份列表、备份路径、数据文件夹路径
+  useEffect(() => {
+    refreshBackups();
+    refreshBackupDir();
+    setDataDir(useAppStore.getState().settings.dataDir || '');
+  }, []);
+  // 数据文件夹改动时同步显示
+  useEffect(() => {
+    setDataDir(settings.dataDir || '');
+  }, [settings.dataDir]);
 
-      setUploading(true);
-      const fsAdapter = {
-        readDir: async (path: string) => {
-          const entries: any[] = await readDir(path);
-          return entries.map((e) => ({ name: e.name, isDir: !!e.isDirectory }));
-        },
-        readTextFile,
-      };
-      const meta = await detectWallpaperFolder(folder, fsAdapter);
-      if (!meta) {
-        addToast(isEn ? 'No video/image found in this folder' : '该文件夹没有找到可用的视频或图片', 'warning');
-        return;
-      }
-
-      // 引用原路径（不复制大视频，加载更快）
-      const ext = meta.file.split('.').pop()?.toLowerCase() || '';
-      const type = VIDEO_EXTS.includes(`.${ext}`) ? 'video' : 'image';
-      updateSettings({
-        background: {
-          ...settings.background,
-          type,
-          source: meta.file,
-          darkOverlay: type === 'video' ? 0 : settings.background.darkOverlay,
-        },
-      });
-      addToast(
-        isEn
-          ? `Imported: ${meta.file.split(/[\\/]/).pop()} (${type === 'video' ? 'video' : 'image'})`
-          : `已导入: ${meta.file.split(/[\\/]/).pop()} (${type === 'video' ? '视频' : '图片'})`,
-        'success'
-      );
-    } catch (e) {
-      console.error('Import folder failed:', e);
-      addToast(isEn ? 'Import failed' : '导入失败', 'error');
-    } finally {
-      setUploading(false);
-    }
+  // 应用内置壁纸
+  const applyBuiltin = (wp: typeof BUILTIN_WALLPAPERS[number]) => {
+    updateSettings({
+      background: {
+        ...settings.background,
+        type: wp.type,
+        source: wp.source,
+        name: wp.name,
+        darkOverlay: settings.background.darkOverlay || 0.45,
+      },
+    });
   };
 
   // 修改主密码
@@ -102,6 +95,36 @@ export function SettingsPanel() {
       addToast(isEn ? 'Update failed' : '更新失败', 'error');
     } finally {
       setPwdLoading(false);
+    }
+  };
+
+  // 数据完整性手动检查
+  const handleIntegrityCheck = async () => {
+    setIntegrityChecking(true);
+    try {
+      const { verifyIntegrity } = await import('@/lib/crypto');
+      const report = await verifyIntegrity();
+      if (report.ok) {
+        addToast(
+          isEn
+            ? `Database OK (${report.checkedEntries} entries checked)`
+            : `数据库完好（已检查 ${report.checkedEntries} 个账号）`,
+          'success'
+        );
+      } else if (report.dbError) {
+        addToast(isEn ? `Database error: ${report.dbError}` : `数据库异常：${report.dbError}`, 'error');
+      } else {
+        addToast(
+          isEn
+            ? `${report.corruptEntries} entries cannot be decrypted`
+            : `${report.corruptEntries} 条数据无法解密（可能被篡改）`,
+          'warning'
+        );
+      }
+    } catch (e: any) {
+      addToast(isEn ? 'Check failed' : '检查失败', 'error');
+    } finally {
+      setIntegrityChecking(false);
     }
   };
 
@@ -140,13 +163,21 @@ export function SettingsPanel() {
           'success'
         );
       } else {
-        const { open } = await import('@tauri-apps/plugin-dialog');
+        if (!backupPwd) {
+          addToast(isEn ? 'Enter backup password' : '请输入备份密码', 'warning');
+          return;
+        }
         const { restoreVault } = await import('@/lib/vaultBackup');
-        const filePath = await open({
-          multiple: false,
-          filters: [{ name: 'FallVault 备份', extensions: ['fvault'] }],
-        });
-        if (!filePath || typeof filePath !== 'string') return;
+        // 优先使用自动备份下拉选中的文件；否则弹出文件选择
+        let filePath = restoreFilePath;
+        if (!filePath) {
+          const { open } = await import('@tauri-apps/plugin-dialog');
+          filePath = await open({
+            multiple: false,
+            filters: [{ name: 'FallVault 备份', extensions: ['fvault'] }],
+          });
+          if (!filePath || typeof filePath !== 'string') return;
+        }
         const res = await restoreVault(backupPwd, filePath);
         addToast(
           isEn
@@ -154,8 +185,8 @@ export function SettingsPanel() {
             : `恢复完成：新增 ${res.newEntries} 个账号（跳过 ${res.skippedEntries} 个重复）`,
           'success'
         );
-        // 恢复后刷新全部数据
         useAppStore.getState().refreshAll();
+        setRestoreFilePath(null);
       }
       setShowBackupModal(false);
       setBackupPwd('');
@@ -181,26 +212,11 @@ export function SettingsPanel() {
     }
   };
 
-  // 选择自定义数据目录
-  const handlePickDataPath = async () => {
-    try {
-      const dir = await open({ multiple: false, directory: true });
-      if (!dir || typeof dir !== 'string') return;
-      updateSettings({ dataPath: dir });
-      addToast(isEn ? 'Data folder updated' : '数据文件夹已更新', 'success');
-    } catch (e) {
-      console.error('Pick data path failed:', e);
-      addToast(isEn ? 'Failed to update data folder' : '数据文件夹更新失败', 'error');
-    }
-  };
-
-  // 恢复默认数据目录
-  const handleResetDataPath = async () => {
-    updateSettings({ dataPath: '' });
-    addToast(isEn ? 'Data folder reset to default' : '已恢复默认数据文件夹', 'success');
-  };
-
   const handleUpload = async (mediaType: 'image' | 'video') => {
+    if (!dataDir) {
+      addToast(isEn ? 'Set the data folder first to upload backgrounds' : '请先设置数据文件夹才能上传背景', 'error');
+      return;
+    }
     try {
       const file = await open({
         multiple: false,
@@ -221,7 +237,13 @@ export function SettingsPanel() {
       const destPath = `${bgDir}/${destName}`;
       await copyFile(file, destPath);
 
-      updateSettings({ background: { ...settings.background, type: mediaType, source: destPath } });
+      // 加入自定义背景清单并应用
+      const id = `custom_${Date.now()}`;
+      const custom = { id, type: mediaType, source: destPath, name };
+      updateSettings({
+        background: { ...settings.background, type: mediaType, source: destPath, name },
+        customBackgrounds: [...settings.customBackgrounds, custom],
+      });
       addToast(isEn ? 'Background saved' : '背景已保存', 'success');
     } catch (e) {
       console.error('Upload bg failed:', e);
@@ -229,6 +251,25 @@ export function SettingsPanel() {
     } finally {
       setUploading(false);
     }
+  };
+
+  // 删除一个自定义背景（从清单移除 + 删除磁盘文件；若正在使用则回退默认）
+  const handleDeleteCustom = async (id: string) => {
+    const list = settings.customBackgrounds;
+    const item = list.find((c) => c.id === id);
+    if (!item) return;
+    const newList = list.filter((c) => c.id !== id);
+    const isUsing = settings.background.type === item.type && settings.background.source === item.source;
+    const next: any = { customBackgrounds: newList };
+    if (isUsing) {
+      // 回退到内置默认壁纸（白凪 shiro）
+      const def = BUILTIN_WALLPAPERS[0];
+      next.background = { ...settings.background, type: def.type, source: def.source, name: def.name };
+    }
+    updateSettings(next);
+    // 删除磁盘文件（忽略错误，例如文件已不存在）
+    try { await removePath(item.source); } catch { /* noop */ }
+    addToast(isEn ? 'Removed' : '已删除', 'success');
   };
 
   return (
@@ -246,7 +287,7 @@ export function SettingsPanel() {
         }}
       >
         {/* 头部 */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-[var(--moon)]">{t('settings')}</h2>
           <button onClick={() => setIsSettingsOpen(false)}
             className="p-1.5 rounded-lg text-[var(--moon-faint)] hover:text-[var(--moon)] hover:bg-[rgba(192,200,216,0.08)] transition-all">
@@ -254,7 +295,30 @@ export function SettingsPanel() {
           </button>
         </div>
 
+        {/* 分类 Tab：外观 / 基础 */}
+        <div className="flex gap-2 mb-5 p-1 rounded-2xl" style={{ background: 'rgba(192,200,216,0.06)' }}>
+          {([
+            ['appearance', isEn ? 'Appearance' : '外观', Palette],
+            ['basic', isEn ? 'Basics' : '基础', Settings2],
+          ] as const).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              onClick={() => setActiveSection(id)}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeSection === id
+                  ? 'text-[#12121E] shadow-lg'
+                  : 'text-[var(--moon-dim)] hover:text-[var(--moon)]'
+              }`}
+              style={activeSection === id ? { background: 'var(--mint)' } : {}}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-6">
+          {activeSection === 'appearance' && (<>
           {/* 主题 */}
           <div>
             <div className="flex items-center gap-2 mb-3">
@@ -305,138 +369,99 @@ export function SettingsPanel() {
               </h3>
             </div>
 
-            {/* 三个预设背景 */}
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                onClick={() => setBackground('linewaves')}
-                className={`rounded-xl p-3 border transition-all text-left ${
-                  settings.background.type === 'linewaves'
-                    ? 'border-transparent shadow-[0_0_20px_rgba(210,210,220,0.15)]'
-                    : 'border-[rgba(192,200,216,0.1)] hover:border-[rgba(192,200,216,0.25)]'
-                }`}
-                style={{
-                  background: settings.background.type === 'linewaves'
-                    ? 'linear-gradient(135deg, rgba(210,210,220,0.12), rgba(210,210,220,0.04))'
-                    : 'rgba(18,18,30,0.5)',
-                }}>
-                <Waves size={18} style={{ color: 'var(--mint)' }} />
-                <div className="text-xs font-medium text-[var(--moon)] mt-2">
-                  {isEn ? 'Line Waves' : '线浪'}
-                </div>
-                <div className="text-[10px] text-[var(--moon-faint)] mt-0.5">
-                  {isEn ? 'Flowing lines' : '流动线条'}
-                </div>
-              </button>
-              <button
-                onClick={() => setBackground('particles')}
-                className={`rounded-xl p-3 border transition-all text-left ${
-                  settings.background.type === 'particles'
-                    ? 'border-transparent shadow-[0_0_20px_rgba(210,210,220,0.15)]'
-                    : 'border-[rgba(192,200,216,0.1)] hover:border-[rgba(192,200,216,0.25)]'
-                }`}
-                style={{
-                  background: settings.background.type === 'particles'
-                    ? 'linear-gradient(135deg, rgba(210,210,220,0.12), rgba(210,210,220,0.04))'
-                    : 'rgba(18,18,30,0.5)',
-                }}>
-                <Sparkles size={18} style={{ color: 'var(--mint)' }} />
-                <div className="text-xs font-medium text-[var(--moon)] mt-2">
-                  {isEn ? 'Particles' : '粒子'}
-                </div>
-                <div className="text-[10px] text-[var(--moon-faint)] mt-0.5">
-                  {isEn ? 'Floating dots' : '漂浮粒子'}
-                </div>
-              </button>
-
-              {/* 自定义上传（图片/视频） */}
-              <div
-                className={`rounded-xl p-3 border transition-all ${
-                  settings.background.type === 'image' || settings.background.type === 'video'
-                    ? 'border-transparent shadow-[0_0_20px_rgba(210,210,220,0.15)]'
-                    : 'border-[rgba(192,200,216,0.1)] hover:border-[rgba(192,200,216,0.25)]'
-                }`}
-                style={{
-                  background: settings.background.type === 'image' || settings.background.type === 'video'
-                    ? 'linear-gradient(135deg, rgba(210,210,220,0.12), rgba(210,210,220,0.04))'
-                    : 'rgba(18,18,30,0.5)',
-                }}>
-                <ImagePlus size={18} style={{ color: 'var(--mint)' }} />
-                <div className="text-xs font-medium text-[var(--moon)] mt-2">
-                  {isEn ? 'Custom' : '自定义'}
-                </div>
-                <div className="text-[10px] text-[var(--moon-faint)] mt-0.5">
-                  {isEn ? 'Upload image or video' : '上传图片或视频'}
-                </div>
-                <div className="flex gap-1.5 mt-2">
+            {/* 内置壁纸网格 */}
+            <div className="grid grid-cols-2 gap-3">
+              {BUILTIN_WALLPAPERS.map((wp) => {
+                const active = settings.background.type === wp.type && settings.background.source === wp.source;
+                return (
                   <button
-                    onClick={() => handleUpload('image')}
-                    disabled={uploading}
-                    className="flex-1 text-[10px] px-2 py-1 rounded-lg bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all disabled:opacity-40 flex items-center justify-center gap-1"
-                    title={isEn ? 'Upload image' : '上传图片'}>
-                    <ImagePlus size={10} /> {isEn ? 'Image' : '图片'}
-                  </button>
-                  <button
-                    onClick={() => handleUpload('video')}
-                    disabled={uploading}
-                    className="flex-1 text-[10px] px-2 py-1 rounded-lg bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all disabled:opacity-40 flex items-center justify-center gap-1"
-                    title={isEn ? 'Upload video' : '上传视频'}>
-                    <Film size={10} /> {isEn ? 'Video' : '视频'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 导入 Wallpaper Engine 壁纸文件夹 - 独立卡片 */}
-            <div
-              className={`mt-3 rounded-xl border transition-all overflow-hidden ${
-                settings.background.type === 'image' || settings.background.type === 'video'
-                  ? 'border-transparent shadow-[0_0_20px_rgba(155,141,181,0.15)]'
-                  : 'border-[rgba(155,141,181,0.2)] hover:border-[rgba(155,141,181,0.4)]'
-              }`}
-              style={{
-                background: settings.background.type === 'image' || settings.background.type === 'video'
-                  ? 'linear-gradient(135deg, rgba(155,141,181,0.14), rgba(155,141,181,0.05))'
-                  : 'rgba(18,18,30,0.5)',
-              }}
-            >
-              <button
-                onClick={handleImportFolder}
-                disabled={uploading}
-                className="w-full flex items-center gap-3 p-3.5 text-left transition-all hover:bg-[rgba(155,141,181,0.08)] disabled:opacity-50"
-              >
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(155, 141, 181, 0.15)' }}
-                >
-                  {uploading ? (
-                    <span className="w-4 h-4 border-2 border-[var(--amethyst)] border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <FolderOpen size={18} style={{ color: 'var(--amethyst)' }} />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-[var(--moon)]">
-                    {isEn ? 'Import Wallpaper Folder' : '导入壁纸文件夹'}
-                  </div>
-                  <div className="text-[11px] text-[var(--moon-faint)] mt-0.5 truncate">
-                    {isEn
-                      ? 'Wallpaper Engine: pick a wallpaper folder'
-                      : 'Wallpaper Engine：选择壁纸文件夹，自动识别视频/图片'}
-                  </div>
-                  {settings.background.name && (settings.background.type === 'image' || settings.background.type === 'video') && (
-                    <div className="text-[11px] text-[var(--amethyst)] mt-1 truncate flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--mint)] flex-shrink-0" />
-                      {isEn ? 'Current: ' : '当前：'}
-                      {settings.background.name}
+                    key={wp.id}
+                    onClick={() => applyBuiltin(wp)}
+                    className={`relative rounded-xl overflow-hidden border transition-all text-left ${
+                      active
+                        ? 'border-transparent shadow-[0_0_20px_rgba(210,210,220,0.25)]'
+                        : 'border-[rgba(192,200,216,0.12)] hover:border-[rgba(192,200,216,0.3)]'
+                    }`}
+                    style={{
+                      background: active
+                        ? 'linear-gradient(135deg, rgba(210,210,220,0.14), rgba(210,210,220,0.05))'
+                        : 'rgba(18,18,30,0.5)',
+                    }}
+                  >
+                    <div className="h-20 w-full bg-cover bg-center" style={{ backgroundImage: `url("${convertFileSrc(wp.preview)}")` }} />
+                    {active && (
+                      <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'var(--mint)' }}>
+                        <span className="text-[10px]" style={{ color: '#12121E' }}>✓</span>
+                      </div>
+                    )}
+                    <div className="p-2.5">
+                      <div className="text-xs font-medium text-[var(--moon)] truncate">{wp.name}</div>
+                      <div className="text-[10px] text-[var(--moon-faint)] mt-0.5">
+                        {wp.type === 'video' ? (isEn ? 'Video' : '视频') : (isEn ? 'Image' : '图片')}
+                      </div>
                     </div>
-                  )}
-                </div>
-                <span className="text-[11px] px-2.5 py-1 rounded-full flex-shrink-0"
-                  style={{ background: 'rgba(155, 141, 181, 0.15)', color: 'var(--amethyst)' }}>
-                  {isEn ? 'Import' : '导入'}
-                </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 自定义上传（图片/视频） */}
+            <div className="mt-3 flex gap-1.5">
+              <button
+                onClick={() => handleUpload('image')}
+                disabled={uploading}
+                className="flex-1 text-[10px] px-2 py-1.5 rounded-lg bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all disabled:opacity-40 flex items-center justify-center gap-1"
+                title={isEn ? 'Upload image' : '上传图片'}>
+                <ImagePlus size={11} /> {isEn ? 'Image' : '图片'}
+              </button>
+              <button
+                onClick={() => handleUpload('video')}
+                disabled={uploading}
+                className="flex-1 text-[10px] px-2 py-1.5 rounded-lg bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all disabled:opacity-40 flex items-center justify-center gap-1"
+                title={isEn ? 'Upload video' : '上传视频'}>
+                <Film size={11} /> {isEn ? 'Video' : '视频'}
               </button>
             </div>
+
+            {/* 自定义背景清单（可滚动，缩略图 + 选择 + 删除） */}
+            {settings.customBackgrounds.length > 0 && (
+              <div className="mt-3 grid grid-cols-3 gap-2 max-h-52 overflow-y-auto pr-1 custom-scroll">
+                {settings.customBackgrounds.map((c) => {
+                  const active = settings.background.type === c.type && settings.background.source === c.source;
+                  return (
+                    <div
+                      key={c.id}
+                      className={`relative group rounded-lg overflow-hidden border cursor-pointer transition-all ${active ? 'border-[var(--mint)] shadow-[0_0_12px_rgba(210,210,220,0.3)]' : 'border-[rgba(192,200,216,0.12)] hover:border-[rgba(192,200,216,0.3)]'}`}
+                      onClick={() => updateSettings({ background: { ...settings.background, type: c.type, source: c.source, name: c.name } })}
+                      title={c.name}
+                    >
+                      <div className="h-16 w-full bg-cover bg-center" style={{ backgroundImage: `url("${convertFileSrc(c.source)}")` }} />
+                      {c.type === 'video' && (
+                        <div className="absolute top-1 left-1 w-4 h-4 rounded bg-black/50 flex items-center justify-center">
+                          <Film size={9} className="text-white" />
+                        </div>
+                      )}
+                      {active && (
+                        <div className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: 'var(--mint)' }}>
+                          <span className="text-[8px]" style={{ color: '#12121E' }}>✓</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteCustom(c.id); }}
+                        className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/55 hover:bg-red-500/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all"
+                        title={isEn ? 'Delete' : '删除'}>
+                        <span className="text-[10px] text-white">✕</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {settings.customBackgrounds.length === 0 && (
+              <div className="mt-3 text-[10px] text-[var(--moon-faint)] text-center py-2">
+                {isEn ? 'No custom backgrounds yet' : '还没有自定义背景'}
+              </div>
+            )}
           </div>
 
           {/* 语言 */}
@@ -491,7 +516,9 @@ export function SettingsPanel() {
             />
             <p className="text-[11px] text-[var(--moon-faint)] mt-1.5">{t('glassOpacityDesc')}</p>
           </div>
+          </>)}
 
+          {activeSection === 'basic' && (<>
           {/* 数据文件夹 */}
           <div>
             <div className="flex items-center gap-2 mb-3">
@@ -502,34 +529,166 @@ export function SettingsPanel() {
             </div>
             <p className="text-[11px] text-[var(--moon-faint)] mb-2">
               {isEn
-                ? 'Icons and backgrounds are stored here (icons/ and backgrounds/ subfolders)'
-                : '图标和背景统一存放在此文件夹（内含 icons/ 与 backgrounds/ 子目录）'}
+                ? 'All files (backups, wallpapers, icons, attachments) are stored here. Set it first to enable auto-backup and background upload.'
+                : '所有文件（自动备份、壁纸、图标、附件）都存放在此文件夹。请先设置，否则自动备份与背景导入将禁用。'}
             </p>
             <div
-              className="rounded-xl px-3 py-2.5 text-[11px] font-mono truncate mb-2.5 border"
+              className="rounded-xl px-3 py-2.5 text-[11px] font-mono truncate mb-2 border"
               style={{
                 background: 'rgba(18,18,30,0.4)',
                 borderColor: 'rgba(192,200,216,0.1)',
-                color: 'var(--moon-dim)',
+                color: dataDir ? 'var(--moon-dim)' : 'var(--danger, #ff6b6b)',
               }}
-              title={settings.dataPath || (isEn ? 'Default (AppData/media)' : '默认（AppData/media）')}
+              title={dataDir || undefined}
             >
-              {settings.dataPath || (isEn ? 'Default location' : '默认位置')}
+              {dataDir || (isEn ? 'Not set — auto backup & background disabled' : '未设置 — 自动备份与背景导入已禁用')}
             </div>
             <div className="flex gap-2">
               <button
-                onClick={handlePickDataPath}
+                onClick={async () => {
+                  const dir = await open({ multiple: false, directory: true });
+                  if (!dir || typeof dir !== 'string') return;
+                  updateSettings({ dataDir: dir });
+                }}
                 className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all flex items-center justify-center gap-1.5"
               >
-                <FolderOpen size={13} /> {isEn ? 'Choose folder' : '选择文件夹'}
+                <FolderCog size={13} /> {isEn ? 'Choose folder' : '选择文件夹'}
               </button>
               <button
-                onClick={handleResetDataPath}
-                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all flex items-center justify-center gap-1.5"
+                onClick={() => dataDir && openFolder(dataDir)}
+                disabled={!dataDir}
+                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <RotateCcw size={13} /> {isEn ? 'Reset' : '恢复默认'}
+                <FolderOpen size={13} /> {isEn ? 'Open folder' : '打开文件夹'}
+              </button>
+              {dataDir && (
+                <button
+                  onClick={() => updateSettings({ dataDir: '' })}
+                  className="text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.08)] text-[var(--moon-faint)] hover:bg-[rgba(210,210,220,0.16)] transition-all"
+                  title={isEn ? 'Clear (disable auto backup)' : '清除（将禁用自动备份）'}
+                >
+                  {isEn ? 'Clear' : '清除'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 自动备份 + 版本历史 */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Save size={15} style={{ color: 'var(--mint)' }} />
+              <h3 className="text-sm font-semibold text-[var(--moon)]">
+                {isEn ? 'Auto Backup & History' : '自动备份与版本历史'}
+              </h3>
+            </div>
+            <label className={`flex items-center gap-2 text-sm text-[var(--moon-dim)] cursor-pointer mb-3 ${!dataDir ? 'opacity-40' : ''}`}>
+              <input
+                type="checkbox"
+                checked={settings.autoBackupEnabled}
+                disabled={!dataDir}
+                onChange={(e) => updateSettings({ autoBackupEnabled: e.target.checked })}
+                className="accent-[var(--mint)]"
+              />
+              {isEn ? 'Enable automatic backup' : '开启自动备份'}
+            </label>
+            {!dataDir && (
+              <p className="text-[11px] text-[var(--danger, #ff6b6b)] mb-3">
+                {isEn ? 'Set the data folder first to enable auto backup.' : '请先设置数据文件夹以启用自动备份。'}
+              </p>
+            )}
+            {settings.autoBackupEnabled && dataDir && (
+              <>
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-xs text-[var(--moon-faint)] whitespace-nowrap">{isEn ? 'Interval' : '备份间隔'}</span>
+                  <select
+                    value={settings.autoBackupIntervalMin}
+                    onChange={(e) => updateSettings({ autoBackupIntervalMin: Number(e.target.value) })}
+                    className="rune-input px-2 py-1.5 text-xs bg-transparent flex-1"
+                  >
+                    <option value={30} style={{ background: '#1A1A2E' }}>30 {isEn ? 'min' : '分钟'}</option>
+                    <option value={60} style={{ background: '#1A1A2E' }}>1 {isEn ? 'hour' : '小时'}</option>
+                    <option value={360} style={{ background: '#1A1A2E' }}>6 {isEn ? 'hours' : '小时'}</option>
+                    <option value={1440} style={{ background: '#1A1A2E' }}>24 {isEn ? 'hours' : '小时'}</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-xs text-[var(--moon-faint)] whitespace-nowrap">{isEn ? 'Keep' : '保留份数'}</span>
+                  <select
+                    value={settings.autoBackupMax}
+                    onChange={(e) => updateSettings({ autoBackupMax: Number(e.target.value) })}
+                    className="rune-input px-2 py-1.5 text-xs bg-transparent flex-1"
+                  >
+                    <option value={1} style={{ background: '#1A1A2E' }}>1 {isEn ? 'copy' : '份'}</option>
+                    <option value={5} style={{ background: '#1A1A2E' }}>5 {isEn ? 'copies' : '份'}</option>
+                  </select>
+                </div>
+                {/* 备份位置：固定为 数据文件夹/backups，仅展示 + 打开 */}
+                <div className="mb-3">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-xs text-[var(--moon-faint)]">{isEn ? 'Backup location' : '备份位置'}</span>
+                    <button
+                      onClick={() => backupDir && openFolder(backupDir)}
+                      className="text-[11px] px-2 py-1 rounded-lg bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all flex items-center gap-1"
+                      title={isEn ? 'Open backup folder' : '打开备份文件夹'}
+                    >
+                      <FolderOpen size={11} /> {isEn ? 'Open' : '打开'}
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-[var(--moon-faint)] break-all rounded-lg bg-[rgba(192,200,216,0.05)] px-2.5 py-1.5">
+                    {backupDir || '—'}
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={async () => {
+                  const ok = await createBackup();
+                  addToast(ok ? (isEn ? 'Backup created' : '已创建备份') : (isEn ? 'Backup failed' : '备份失败'), ok ? 'success' : 'error');
+                  refreshBackups();
+                }}
+                disabled={!dataDir}
+                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Save size={13} /> {isEn ? 'Backup now' : '立即备份'}
+              </button>
+              <button
+                onClick={refreshBackups}
+                className="px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all flex items-center justify-center"
+                title={isEn ? 'Refresh list' : '刷新列表'}
+              >
+                <RotateCcw size={13} />
               </button>
             </div>
+            {backups.length > 0 && (
+              <div className="flex items-center gap-2">
+                <select
+                  className="rune-input px-2 py-1.5 text-xs bg-transparent flex-1"
+                  defaultValue=""
+                  onChange={async (e) => {
+                    const path = e.target.value;
+                    if (!path) return;
+                    // 与"恢复备份"完全相同的流程：打开恢复弹窗，输入密码解密
+                    setRestoreFilePath(path);
+                    setBackupAction('import');
+                    setShowBackupModal(true);
+                    e.target.value = '';
+                  }}
+                >
+                  <option value="" style={{ background: '#1A1A2E' }}>{isEn ? 'Select a backup to restore…' : '选择要恢复的备份…'}</option>
+                  {backups.map((b) => (
+                    <option key={b.name} value={b.path} style={{ background: '#1A1A2E' }}>
+                      {b.time} · {b.size}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <p className="text-[11px] text-[var(--moon-faint)] mt-2">
+              {isEn
+                ? 'Backups are stored in the data folder by default, or a custom folder you choose. Restore reloads the app.'
+                : '备份默认保存在数据文件夹中，也可自选存放目录；恢复会重启应用以重新加载。'}
+            </p>
           </div>
 
           {/* 自动锁定 */}
@@ -621,7 +780,29 @@ export function SettingsPanel() {
                 ? 'Backup encrypts all entries + attachments into one .fvault file with a password. Restore merges it back.'
                 : '备份会把全部账号和附件加密为一个 .fvault 文件（需设置备份密码）。恢复时合并回保险库。'}
             </p>
+            <button
+              onClick={handleIntegrityCheck}
+              disabled={integrityChecking}
+              className="mt-2 w-full text-xs px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.05)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.12)] transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {integrityChecking ? (
+                <span className="w-3.5 h-3.5 border-2 border-[var(--mint)] border-t-transparent rounded-full animate-spin inline-block" />
+              ) : (
+                <GlassWater size={13} />
+              )}
+              {integrityChecking
+                ? (isEn ? 'Checking...' : '检查中…')
+                : (isEn ? 'Check Database Integrity' : '数据完整性检查')}
+            </button>
+            <button
+              onClick={() => setIsTotpMigrationOpen(true)}
+              className="mt-2 w-full text-xs px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.05)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.12)] transition-all flex items-center justify-center gap-1.5"
+            >
+              <Smartphone size={13} />
+              {isEn ? 'TOTP Migration' : 'TOTP 迁移（批量导出/导入）'}
+            </button>
           </div>
+          </>)}
         </div>
       </div>
 
@@ -733,11 +914,18 @@ export function SettingsPanel() {
             )}
 
             <div className="space-y-3">
+              {backupAction === 'import' && (
+                <div className="text-[11px] rounded-lg px-2.5 py-2 bg-[rgba(125,211,192,0.08)] text-[var(--mint)] leading-relaxed">
+                  {isEn
+                    ? 'Tip: auto backups are encrypted with your master (lock) password. Enter that password to restore.'
+                    : '提示：自动备份是用你的主密码（即软件锁定密码）加密的，请输入该密码来恢复。'}
+                </div>
+              )}
               <input
                 type="password"
                 value={backupPwd}
                 onChange={(e) => setBackupPwd(e.target.value)}
-                placeholder={isEn ? 'Backup password' : '备份密码'}
+                placeholder={isEn ? 'Backup password' : '备份密码（主密码）'}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none transition-all focus:border-[var(--mint)] text-[var(--moon)] placeholder:text-[var(--moon-faint)]"
               />
               {backupAction === 'export' && (
@@ -763,6 +951,7 @@ export function SettingsPanel() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

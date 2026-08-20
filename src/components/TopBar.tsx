@@ -24,6 +24,24 @@ export function TopBar() {
     addToast(next === 'zh' ? '已切换为中文' : 'Switched to English', 'success');
   };
 
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA';
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      } else if (e.key === '/' && !typing) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const cycleTheme = () => {
     const ids = THEMES.map((th) => th.id);
     const idx = ids.indexOf(settings.theme);
@@ -34,6 +52,7 @@ export function TopBar() {
   };
 
   const openModal = () => {
+    useAppStore.getState().setTemplatePrefill(null);
     useAppStore.getState().setIsEntryModalOpen(true);
   };
 
@@ -117,6 +136,7 @@ export function TopBar() {
       <div className="relative flex-1 max-w-md group">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--moon-faint)] group-focus-within:text-[var(--mint)] transition-colors" size={17} />
         <input
+          ref={searchRef}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder={t('searchPlaceholder')}
@@ -229,7 +249,7 @@ export function TopBar() {
 
         <SpecularButton
           onClick={openModal}
-          className="px-5 py-2.5 text-sm font-medium"
+          className="px-4 py-2.5 text-sm font-medium"
         >
           <Plus size={17} />
           <span>{t('newEntry')}</span>
