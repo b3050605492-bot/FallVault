@@ -20,6 +20,8 @@ import { lockVault } from '@/lib/crypto';
 import { useAutoLock } from '@/hooks/useAutoLock';
 import { startAutoBackup, stopAutoBackup } from '@/lib/backupManager';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/core';
+import { mkdirAll } from '@/lib/rustFs';
 
 function App() {
   useDatabase();
@@ -63,6 +65,21 @@ function App() {
     const handler = () => setImportOpen(true);
     window.addEventListener('fallvault:open-import', handler);
     return () => window.removeEventListener('fallvault:open-import', handler);
+  }, []);
+
+  // 首次安装（无已保存设置）时，自动把数据文件夹默认指向 exe 同级 data/ 并建好目录，开箱即用
+  useEffect(() => {
+    const initDefaultDataDir = async () => {
+      try {
+        if (localStorage.getItem('fallvault-settings')) return; // 已有设置则不动
+        if (useAppStore.getState().settings.dataDir?.trim()) return;
+        const exe = (await invoke('get_exe_dir')) as string;
+        const dir = `${exe}\\data`;
+        await mkdirAll(dir);
+        useAppStore.getState().updateSettings({ dataDir: dir });
+      } catch { /* 忽略：用户仍可在设置里手动选择 */ }
+    };
+    initDefaultDataDir();
   }, []);
 
   // 自动锁定：闲置超时自动回解锁页
