@@ -3,6 +3,7 @@ import { X, Save, Star, Eye, EyeOff, History, ImagePlus, Globe, KeyRound, Refres
 import { useAppStore } from '@/stores/appStore';
 import { useToastStore } from '@/stores/toastStore';
 import { createEntry, updateEntry, getPasswordHistory, getEntryTags, getAttachments, addAttachment, deleteAttachment } from '@/lib/db';
+import { parseGoogleMigration, parseOtpAuth } from '@/lib/totp';
 import { encryptAttachment, decryptAttachment } from '@/lib/crypto';
 import { Paperclip, Download, Trash2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -40,6 +41,7 @@ export function EntryModal() {
   const [genNumbers, setGenNumbers] = useState(true);
   const [genSymbols, setGenSymbols] = useState(true);
   const [genExclude, setGenExclude] = useState(true);
+  const [totpInfo, setTotpInfo] = useState<{ name?: string; fromMigration: boolean } | null>(null);
 
   useEffect(() => {
     if (editingEntry) {
@@ -58,6 +60,7 @@ export function EntryModal() {
       setSelectedTags([]);
       setPasswordHistory([]);
       setStrength(null);
+      setTotpInfo(null);
     }
   }, [editingEntry]);
 
@@ -559,13 +562,37 @@ export function EntryModal() {
             </label>
             <input
               value={form.totp_secret || ''}
-              onChange={e => setForm({ ...form, totp_secret: e.target.value.trim() })}
-              placeholder="粘贴 TOTP 密钥或 otpauth:// URI（如 JBSWY3DPEHPK3PXP）"
+              onChange={e => {
+                const raw = e.target.value.trim();
+                // 智能识别：Google 批量迁移链接 → 取第一个条目的 secret；otpauth:// → 提取 secret；否则按明文密钥
+                if (raw.startsWith('otpauth-migration://')) {
+                  const list = parseGoogleMigration(raw);
+                  if (list.length > 0) {
+                    setForm({ ...form, totp_secret: list[0].secret });
+                    setTotpInfo({ name: list[0].name || list[0].issuer, fromMigration: true });
+                    if (list.length > 1) addToast(`已提取第 1 个「${list[0].name || list[0].issuer || '未命名'}」，其余 ${list.length - 1} 个可在设置→TOTP 批量导入`, 'info');
+                  } else {
+                    setForm({ ...form, totp_secret: raw });
+                    setTotpInfo(null);
+                  }
+                } else if (raw.startsWith('otpauth://')) {
+                  const s = parseOtpAuth(raw);
+                  setForm({ ...form, totp_secret: s || raw });
+                  setTotpInfo(s ? { fromMigration: false } : null);
+                } else {
+                  setForm({ ...form, totp_secret: raw });
+                  setTotpInfo(null);
+                }
+              }}
+              placeholder="粘贴 TOTP 密钥 / otpauth:// URI / 谷歌验证器迁移链接"
               className="rune-input w-full px-3 py-2.5 text-sm font-mono"
             />
             {form.totp_secret && (
               <p className="text-[11px] text-[var(--mint)] mt-1.5 flex items-center gap-1">
-                <RefreshCw size={10} /> 保存后卡片上会实时显示 6 位验证码
+                <RefreshCw size={10} />
+                {totpInfo?.fromMigration && totpInfo.name
+                  ? `已从迁移链接解析「${totpInfo.name}」：保存后卡片上会实时显示 6 位验证码`
+                  : '保存后卡片上会实时显示 6 位验证码'}
               </p>
             )}
           </div>
