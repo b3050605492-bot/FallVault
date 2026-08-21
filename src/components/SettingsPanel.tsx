@@ -298,8 +298,8 @@ export function SettingsPanel() {
     try {
       await lockVault();
       setIsSettingsOpen(false);
-      // 触发应用锁定：通过 window 事件通知 App
-      window.dispatchEvent(new Event('fallvault:lock'));
+      // 触发应用锁定：通过 Tauri 事件总线通知 App（listen 接收）
+      import('@tauri-apps/api/event').then((m) => m.emit('fallvault:lock')).catch(() => {});
       addToast(isEn ? 'Vault locked' : '已锁定', 'success');
     } catch (e) {
       console.error('lock failed', e);

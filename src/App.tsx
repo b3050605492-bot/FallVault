@@ -23,6 +23,7 @@ import { useAutoLock } from '@/hooks/useAutoLock';
 import { startAutoBackup, stopAutoBackup } from '@/lib/backupManager';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { mkdirAll } from '@/lib/rustFs';
 
 function App() {
@@ -45,28 +46,27 @@ function App() {
   // 启动时等待 LockScreen 初始化（内部检测是否有主密码）
   // locked 初始 true → 显示解锁屏；解锁后 false 显示主界面
 
-  // 监听设置面板发出的"锁定"事件（含关闭到托盘）——先 checkpoint 落盘 WAL，再清空内存密钥
+  // 监听设置面板 / Rust 端发出的"锁定"事件（关闭到托盘）——先 checkpoint 落盘 WAL，再清空内存密钥
+  // 注意：必须用 Tauri 的 listen() 接收 Rust app.emit 的事件（window.addEventListener 收不到 Tauri 事件总线）
   useEffect(() => {
     const handler = () => {
       import('@/lib/db').then((m) => m.checkpointDatabase()).catch(() => {});
       lockVault().then(() => setLocked(true)).catch(() => setLocked(true));
     };
-    window.addEventListener('fallvault:lock', handler);
-    return () => window.removeEventListener('fallvault:lock', handler);
+    const un = listen('fallvault:lock', handler);
+    return () => { un.then((fn) => fn()).catch(() => {}); };
   }, []);
 
   // 恢复备份后 reload：重置锁定状态，让 LockScreen 重新检测是否已有主密码
   useEffect(() => {
-    const handler = () => setLocked(true);
-    window.addEventListener('fallvault:reload', handler);
-    return () => window.removeEventListener('fallvault:reload', handler);
+    const un = listen('fallvault:reload', () => setLocked(true));
+    return () => { un.then((fn) => fn()).catch(() => {}); };
   }, []);
 
   // 监听打开导入弹窗事件
   useEffect(() => {
-    const handler = () => setImportOpen(true);
-    window.addEventListener('fallvault:open-import', handler);
-    return () => window.removeEventListener('fallvault:open-import', handler);
+    const un = listen('fallvault:open-import', () => setImportOpen(true));
+    return () => { un.then((fn) => fn()).catch(() => {}); };
   }, []);
 
   // 启动半自动填充：把当前设置的热键推给 Rust 端监听

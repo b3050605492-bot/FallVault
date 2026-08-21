@@ -171,7 +171,7 @@ export function TopBar() {
 
         {/* 导入按钮 */}
         <button
-          onClick={() => window.dispatchEvent(new CustomEvent('fallvault:open-import'))}
+          onClick={() => import('@tauri-apps/api/event').then((m) => m.emit('fallvault:open-import')).catch(() => {})}
           className="rune-btn p-2.5 rounded-xl text-[var(--moon-dim)] hover:text-[var(--moon)]"
           title={isEn ? 'Import entries' : '导入账号'}
         >
