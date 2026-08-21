@@ -68,9 +68,11 @@
 
 | 主界面 | 设置面板 |
 |--------|----------|
-| 待补充 | 待补充 |
+| ![主界面](docs/screenshots/01-main.png) | ![设置面板](docs/screenshots/02-settings.png) |
 
-> 截图待补充（欢迎 PR 💖）
+| 账号详情页 | 新建账号 | 账号卡片 |
+|------------|----------|----------|
+| ![账号详情页](docs/screenshots/03-detail.png) | ![新建账号](docs/screenshots/04-newentry.png) | ![账号卡片](docs/screenshots/05-card.png) |
 
 ---
 
