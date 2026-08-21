@@ -156,6 +156,14 @@ fn set_autofill_hotkey(state: tauri::State<Arc<AutofillState>>, hotkey: String) 
 
 fn main() {
     tauri::Builder::default()
+        // 单实例：多次双击 exe 只保留一个应用，新实例聚焦已有窗口并退出
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
