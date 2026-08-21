@@ -3,7 +3,7 @@
 
 // 半自动浏览器填充：全局热键（默认 Ins）→ 把待填账号/密码粘贴进当前焦点输入框
 mod autofill;
-use autofill::{AutofillState, FillTarget, start_autofill};
+use autofill::{start_autofill, AutofillState, FillTarget};
 use std::sync::Arc;
 
 use std::process::Command;
@@ -126,7 +126,9 @@ fn copy_file(src: String, dst: String) -> Result<(), String> {
     if let Some(parent) = std::path::Path::new(&dst).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::copy(&src, &dst).map_err(|e| format!("{}", e)).map(|_| ())
+    std::fs::copy(&src, &dst)
+        .map_err(|e| format!("{}", e))
+        .map(|_| ())
 }
 
 #[tauri::command]
@@ -184,8 +186,16 @@ fn main() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
+                            // 已可见：只聚焦，不打扰正在使用的用户
+                            if w.is_visible().unwrap_or(false) {
+                                let _ = w.set_focus();
+                            } else {
+                                // 从「关闭到托盘」恢复 → 强制重新锁定（要求重新输密码）
+                                let _ = w.show();
+                                let _ = w.unminimize();
+                                let _ = w.set_focus();
+                                let _ = app.emit("fallvault:lock", ());
+                            }
                         }
                     }
                     "lock" => {
