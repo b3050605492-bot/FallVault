@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_TAB, VK_V,
+    INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_RETURN, VK_V,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -71,6 +71,22 @@ fn foreground_is_ours() -> bool {
     }
 }
 
+// 构造一个键盘输入事件
+fn key_input(vk: u16, flags: u32) -> INPUT {
+    INPUT {
+        r#type: 1, // INPUT_KEYBOARD
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
 // 发送一次按键（按下+抬起）
 unsafe fn send_key(vk: u16) {
     let down = INPUT {
@@ -111,16 +127,28 @@ unsafe fn send_key(vk: u16) {
     thread::sleep(Duration::from_millis(20));
 }
 
-// 模拟 Ctrl+V 粘贴（当前剪贴板内容）
+// 模拟一次 Ctrl+V 粘贴（真正的原子组合：Ctrl 按住期间按下/抬起 V，再抬起 Ctrl）
 unsafe fn send_paste() {
-    // Ctrl down
-    send_key(VK_CONTROL as u16);
-    send_key(VK_V as u16);
-    // Ctrl up
-    send_key(VK_CONTROL as u16);
+    let inputs = [
+        key_input(VK_CONTROL as u16, 0),
+        key_input(VK_V as u16, 0),
+        key_input(VK_V as u16, KEYEVENTF_KEYUP),
+        key_input(VK_CONTROL as u16, KEYEVENTF_KEYUP),
+    ];
+    windows_sys::Win32::UI::Input::KeyboardAndMouse::SendInput(
+        4,
+        inputs.as_ptr(),
+        std::mem::size_of::<INPUT>() as i32,
+    );
+    thread::sleep(Duration::from_millis(30));
 }
 
-// 执行填充流程
+// 模拟一次回车
+unsafe fn send_enter() {
+    send_key(VK_RETURN as u16);
+}
+
+// 执行填充流程：账号 → 回车 → 密码（中间不再用 Tab）
 fn do_fill(app: &AppHandle, target: &FillTarget) {
     if target.username.is_empty() && target.password.is_empty() {
         return;
@@ -137,8 +165,8 @@ fn do_fill(app: &AppHandle, target: &FillTarget) {
             send_paste();
             thread::sleep(Duration::from_millis(120));
         }
-        // 跳到下一个输入框
-        send_key(VK_TAB as u16);
+        // 回车进入下一字段（密码框）
+        send_enter();
         thread::sleep(Duration::from_millis(120));
         // 密码
         if !target.password.is_empty() {

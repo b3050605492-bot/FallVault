@@ -35,6 +35,36 @@ export function SettingsPanel() {
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [backupDir, setBackupDir] = useState<string>('');
   const [dataDir, setDataDir] = useState<string>('');
+  const [capturing, setCapturing] = useState(false);
+
+  // 把键盘事件的 code 映射成 Rust 端支持的热键 token
+  const codeToHotkey = (code: string): string | null => {
+    if (code === 'Insert') return 'Ins';
+    if (code === 'Pause') return 'Pause';
+    const m = /^F(\d{1,2})$/.exec(code);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 1 && n <= 12) return `F${n}`;
+    }
+    return null;
+  };
+
+  // 捕获热键：监听下一次真实按键
+  useEffect(() => {
+    if (!capturing) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const token = codeToHotkey(e.code);
+      setCapturing(false);
+      if (token) {
+        updateSettings({ autofillHotkey: token });
+        setAutofillHotkey(token).catch(() => {});
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [capturing]);
 
   // 用系统文件管理器打开文件夹（Rust 命令）
   const openFolder = async (path: string) => {
@@ -602,22 +632,27 @@ export function SettingsPanel() {
             </div>
             <p className="text-xs text-[var(--moon-faint)] mb-3">
               {isEn
-                ? 'Copy an account or password, then focus the login field in your browser and press the hotkey to fill username + password automatically. Clipboard is cleared after filling.'
-                : '复制某条账号或密码后，在浏览器里点进登录框，按此热键即可自动填入账号+密码（填完自动清空剪贴板）。'}
+                ? 'Select an entry (or copy its account/password), then focus the login field in your browser and press the hotkey: it fills username, presses Enter, then fills password. Clipboard is cleared after filling.'
+                : '选中某条账号（或复制其账号/密码）后，在浏览器里点进登录框，按此热键：先填账号、回车、再填密码（填完自动清空剪贴板）。'}
             </p>
             <div className="flex items-center gap-2">
-              <input
-                value={settings.autofillHotkey}
-                onChange={(e) => {
-                  const v = e.target.value.trim() || 'Ins';
-                  updateSettings({ autofillHotkey: v });
-                  setAutofillHotkey(v).catch(() => {});
-                }}
-                placeholder="Ins"
-                className="w-32 px-3 py-2 rounded-xl bg-[rgba(18,18,30,0.6)] border border-[rgba(192,200,216,0.12)] text-[var(--moon)] text-sm focus:outline-none focus:border-[var(--mint)]"
-              />
+              {capturing ? (
+                <button
+                  className="px-3 py-2 rounded-xl bg-[rgba(125,211,192,0.18)] border border-[var(--mint)] text-[var(--mint)] text-sm animate-pulse"
+                  onClick={() => setCapturing(false)}
+                >
+                  {isEn ? 'Press any key… (Esc to cancel)' : '请按下任意按键…（Esc 取消）'}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setCapturing(true)}
+                  className="px-3 py-2 rounded-xl bg-[rgba(18,18,30,0.6)] border border-[rgba(192,200,216,0.12)] text-[var(--moon)] text-sm hover:border-[var(--mint)] transition-all min-w-[120px] text-left"
+                >
+                  {settings.autofillHotkey || 'Ins'}
+                </button>
+              )}
               <span className="text-xs text-[var(--moon-faint)]">
-                {isEn ? 'Supported: Ins, F1-F12, Pause, Scroll' : '支持：Ins、F1-F12、Pause、Scroll'}
+                {isEn ? 'Click then press a key (Ins / F1-F12 / Pause)' : '点击后按一下按键即可（支持 Ins / F1-F12 / Pause）'}
               </span>
             </div>
           </div>

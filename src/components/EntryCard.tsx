@@ -105,6 +105,7 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
+    setFillTarget({ username: entry.username || '', password: entry.password || '' });
     setEditingEntry(entry);
     setIsEntryModalOpen(true);
   };
