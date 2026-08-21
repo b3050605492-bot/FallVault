@@ -5,6 +5,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { TopBar } from '@/components/TopBar';
 import { EntryList } from '@/components/EntryList';
 import { EntryModal } from '@/components/EntryModal';
+import { EntryDetail } from '@/components/EntryDetail';
 import { Toast } from '@/components/Toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SettingsPanel } from '@/components/SettingsPanel';
@@ -26,7 +27,7 @@ import { mkdirAll } from '@/lib/rustFs';
 
 function App() {
   useDatabase();
-  const { isEntryModalOpen, isSettingsOpen, isPasswordGeneratorOpen, isSecurityAuditOpen, isTotpMigrationOpen, settings } = useAppStore();
+  const { isEntryModalOpen, isSettingsOpen, isPasswordGeneratorOpen, isSecurityAuditOpen, isTotpMigrationOpen, isDetailOpen, settings } = useAppStore();
   const [locked, setLocked] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -152,6 +153,7 @@ function App() {
       )}
 
       {/* 全局弹窗层（仅解锁后显示） */}
+      {!locked && isDetailOpen && <EntryDetail />}
       {!locked && isEntryModalOpen && <EntryModal />}
       {!locked && isSettingsOpen && <SettingsPanel />}
       {!locked && isPasswordGeneratorOpen && <PasswordGenerator />}

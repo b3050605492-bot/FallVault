@@ -31,7 +31,7 @@ function useImgError() {
 }
 
 export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }) {
-  const { setEditingEntry, setIsEntryModalOpen, refreshAll, setConfirmDialog, settings } = useAppStore();
+  const { setEditingEntry, setIsEntryModalOpen, setDetailOpen, setSelectedEntryId, refreshAll, setConfirmDialog, settings } = useAppStore();
   const { addToast } = useToastStore();
   const isEn = settings?.language === 'en';
   const [showPassword, setShowPassword] = useState(false);
@@ -110,6 +110,12 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
     setIsEntryModalOpen(true);
   };
 
+  // 点开卡片 → 打开详情页（大 UI）
+  const handleOpen = () => {
+    setSelectedEntryId(entry.id);
+    setDetailOpen(true);
+  };
+
   const tagNames = entry.tag_names ? entry.tag_names.split(',') : [];
   const tagColors = entry.tag_colors ? entry.tag_colors.split(',') : [];
 
@@ -118,9 +124,10 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
       <GlareHover glareColor="rgba(210,210,220, 0.08)" glareSize={250}>
         <ClickSpark sparkColor="#7DD3C0" sparkCount={8}>
           <div
-            className="rune-panel rune-card p-4 relative overflow-hidden"
+            className="rune-panel rune-card p-4 relative overflow-hidden cursor-pointer"
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
+            onClick={handleOpen}
           >
             {/* 顶部发光条 */}
             <div className="absolute top-0 left-6 right-6 h-[1.5px] rounded-full transition-all duration-500"
@@ -243,21 +250,19 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
               )}
             </div>
 
-            {/* 标签 */}
-            {tagNames.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-3.5">
-                {tagNames.map((name: string, i: number) => (
-                  <span key={i} className="text-[11px] px-2.5 py-1 rounded-full font-medium"
-                    style={{
-                      backgroundColor: `${tagColors[i]}18`,
-                      color: tagColors[i] || 'var(--moon-dim)',
-                      border: `1px solid ${tagColors[i] ? `${tagColors[i]}25` : 'rgba(192,200,216,0.1)'}`,
-                    }}>
-                    {name}
-                  </span>
-                ))}
-              </div>
-            )}
+            {/* 标签（固定高度占位，保证有/无标签卡片高度一致） */}
+            <div className="flex flex-wrap gap-1.5 mt-3.5 min-h-[22px]">
+              {tagNames.map((name: string, i: number) => (
+                <span key={i} className="text-[11px] px-2.5 py-1 rounded-full font-medium"
+                  style={{
+                    backgroundColor: `${tagColors[i]}18`,
+                    color: tagColors[i] || 'var(--moon-dim)',
+                    border: `1px solid ${tagColors[i] ? `${tagColors[i]}25` : 'rgba(192,200,216,0.1)'}`,
+                  }}>
+                  {name}
+                </span>
+              ))}
+            </div>
 
             {/* 底部操作 */}
             <div className={`flex items-center gap-1 mt-3 pt-2.5 border-t border-[rgba(192,200,216,0.06)] transition-all duration-300 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>

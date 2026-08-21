@@ -13,6 +13,7 @@ interface AppState {
   selectedTagId: number | null;
   searchQuery: string;
   selectedEntryId: number | null;
+  isDetailOpen: boolean;
   isLoading: boolean;
 
   // UI
@@ -47,6 +48,7 @@ interface AppState {
   setSelectedTagId: (id: number | null) => void;
   setSearchQuery: (query: string) => void;
   setSelectedEntryId: (id: number | null) => void;
+  setDetailOpen: (open: boolean) => void;
   setIsLoading: (loading: boolean) => void;
   setIsSidebarOpen: (open: boolean) => void;
   setIsEntryModalOpen: (open: boolean) => void;
@@ -115,6 +117,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedTagId: null,
   searchQuery: '',
   selectedEntryId: null,
+  isDetailOpen: false,
   isLoading: false,
   isSidebarOpen: true,
   isEntryModalOpen: false,
@@ -135,6 +138,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedTagId: (id) => set({ selectedTagId: id, selectedFolderId: null, searchQuery: '' }),
   setSearchQuery: (query) => set({ searchQuery: query, selectedFolderId: null, selectedTagId: null }),
   setSelectedEntryId: (id) => set({ selectedEntryId: id }),
+  setDetailOpen: (open) => set({ isDetailOpen: open }),
   setIsLoading: (loading) => set({ isLoading: loading }),
   setIsSidebarOpen: (open) => set({ isSidebarOpen: open }),
   setIsEntryModalOpen: (open) => set({ isEntryModalOpen: open }),
