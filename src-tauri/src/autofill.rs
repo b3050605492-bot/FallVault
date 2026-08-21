@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_RETURN, VK_V,
+    INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_TAB, VK_V,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -37,23 +37,87 @@ impl AutofillState {
     }
 }
 
-// 把前端传来的热键名映射到 rdev 的 Key（仅支持常见几个）
+// 把前端传来的热键 token（rdev 变体名，如 "KeyA" / "Num1" / "F2" / "Insert" / "Tab"）映射到 rdev::Key
 fn map_key(name: &str) -> Option<rdev::Key> {
-    match name.trim().to_lowercase().as_str() {
-        "ins" | "insert" => Some(rdev::Key::Insert),
-        "f1" => Some(rdev::Key::F1),
-        "f2" => Some(rdev::Key::F2),
-        "f3" => Some(rdev::Key::F3),
-        "f4" => Some(rdev::Key::F4),
-        "f5" => Some(rdev::Key::F5),
-        "f6" => Some(rdev::Key::F6),
-        "f7" => Some(rdev::Key::F7),
-        "f8" => Some(rdev::Key::F8),
-        "f9" => Some(rdev::Key::F9),
-        "f10" => Some(rdev::Key::F10),
-        "f11" => Some(rdev::Key::F11),
-        "f12" => Some(rdev::Key::F12),
-        "pause" => Some(rdev::Key::Pause),
+    match name {
+        "Ins" | "Insert" => Some(rdev::Key::Insert),
+        "F1" => Some(rdev::Key::F1),
+        "F2" => Some(rdev::Key::F2),
+        "F3" => Some(rdev::Key::F3),
+        "F4" => Some(rdev::Key::F4),
+        "F5" => Some(rdev::Key::F5),
+        "F6" => Some(rdev::Key::F6),
+        "F7" => Some(rdev::Key::F7),
+        "F8" => Some(rdev::Key::F8),
+        "F9" => Some(rdev::Key::F9),
+        "F10" => Some(rdev::Key::F10),
+        "F11" => Some(rdev::Key::F11),
+        "F12" => Some(rdev::Key::F12),
+        "KeyA" => Some(rdev::Key::KeyA),
+        "KeyB" => Some(rdev::Key::KeyB),
+        "KeyC" => Some(rdev::Key::KeyC),
+        "KeyD" => Some(rdev::Key::KeyD),
+        "KeyE" => Some(rdev::Key::KeyE),
+        "KeyF" => Some(rdev::Key::KeyF),
+        "KeyG" => Some(rdev::Key::KeyG),
+        "KeyH" => Some(rdev::Key::KeyH),
+        "KeyI" => Some(rdev::Key::KeyI),
+        "KeyJ" => Some(rdev::Key::KeyJ),
+        "KeyK" => Some(rdev::Key::KeyK),
+        "KeyL" => Some(rdev::Key::KeyL),
+        "KeyM" => Some(rdev::Key::KeyM),
+        "KeyN" => Some(rdev::Key::KeyN),
+        "KeyO" => Some(rdev::Key::KeyO),
+        "KeyP" => Some(rdev::Key::KeyP),
+        "KeyQ" => Some(rdev::Key::KeyQ),
+        "KeyR" => Some(rdev::Key::KeyR),
+        "KeyS" => Some(rdev::Key::KeyS),
+        "KeyT" => Some(rdev::Key::KeyT),
+        "KeyU" => Some(rdev::Key::KeyU),
+        "KeyV" => Some(rdev::Key::KeyV),
+        "KeyW" => Some(rdev::Key::KeyW),
+        "KeyX" => Some(rdev::Key::KeyX),
+        "KeyY" => Some(rdev::Key::KeyY),
+        "KeyZ" => Some(rdev::Key::KeyZ),
+        "Num0" => Some(rdev::Key::Num0),
+        "Num1" => Some(rdev::Key::Num1),
+        "Num2" => Some(rdev::Key::Num2),
+        "Num3" => Some(rdev::Key::Num3),
+        "Num4" => Some(rdev::Key::Num4),
+        "Num5" => Some(rdev::Key::Num5),
+        "Num6" => Some(rdev::Key::Num6),
+        "Num7" => Some(rdev::Key::Num7),
+        "Num8" => Some(rdev::Key::Num8),
+        "Num9" => Some(rdev::Key::Num9),
+        "Tab" => Some(rdev::Key::Tab),
+        "Return" => Some(rdev::Key::Return),
+        "Delete" => Some(rdev::Key::Delete),
+        "Backspace" => Some(rdev::Key::Backspace),
+        "Escape" => Some(rdev::Key::Escape),
+        "Space" => Some(rdev::Key::Space),
+        "Pause" => Some(rdev::Key::Pause),
+        "ScrollLock" => Some(rdev::Key::ScrollLock),
+        "PrintScreen" => Some(rdev::Key::PrintScreen),
+        "CapsLock" => Some(rdev::Key::CapsLock),
+        "BackQuote" => Some(rdev::Key::BackQuote),
+        "Minus" => Some(rdev::Key::Minus),
+        "Equal" => Some(rdev::Key::Equal),
+        "LeftBracket" => Some(rdev::Key::LeftBracket),
+        "RightBracket" => Some(rdev::Key::RightBracket),
+        "BackSlash" => Some(rdev::Key::BackSlash),
+        "SemiColon" => Some(rdev::Key::SemiColon),
+        "Quote" => Some(rdev::Key::Quote),
+        "Comma" => Some(rdev::Key::Comma),
+        "Dot" => Some(rdev::Key::Dot),
+        "Slash" => Some(rdev::Key::Slash),
+        "UpArrow" => Some(rdev::Key::UpArrow),
+        "DownArrow" => Some(rdev::Key::DownArrow),
+        "LeftArrow" => Some(rdev::Key::LeftArrow),
+        "RightArrow" => Some(rdev::Key::RightArrow),
+        "Home" => Some(rdev::Key::Home),
+        "End" => Some(rdev::Key::End),
+        "PageUp" => Some(rdev::Key::PageUp),
+        "PageDown" => Some(rdev::Key::PageDown),
         _ => None,
     }
 }
@@ -143,12 +207,7 @@ unsafe fn send_paste() {
     thread::sleep(Duration::from_millis(30));
 }
 
-// 模拟一次回车
-unsafe fn send_enter() {
-    send_key(VK_RETURN as u16);
-}
-
-// 执行填充流程：账号 → 回车 → 密码（中间不再用 Tab）
+// 执行填充流程：账号 → Tab 跳到密码框 → 密码（密码后不自动回车，避免直接提交登录）
 fn do_fill(app: &AppHandle, target: &FillTarget) {
     if target.username.is_empty() && target.password.is_empty() {
         return;
@@ -165,8 +224,8 @@ fn do_fill(app: &AppHandle, target: &FillTarget) {
             send_paste();
             thread::sleep(Duration::from_millis(120));
         }
-        // 回车进入下一字段（密码框）
-        send_enter();
+        // Tab 跳到下一个输入框（密码框）
+        send_key(VK_TAB as u16);
         thread::sleep(Duration::from_millis(120));
         // 密码
         if !target.password.is_empty() {

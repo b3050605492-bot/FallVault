@@ -37,25 +37,68 @@ export function SettingsPanel() {
   const [dataDir, setDataDir] = useState<string>('');
   const [capturing, setCapturing] = useState(false);
 
-  // 把键盘事件的 code 映射成 Rust 端支持的热键 token
-  const codeToHotkey = (code: string): string | null => {
+  // 把键盘事件的 code 映射成 Rust 端 rdev 变体名 token（支持任意键）
+  const codeToToken = (code: string): string | null => {
     if (code === 'Insert') return 'Ins';
-    if (code === 'Pause') return 'Pause';
-    const m = /^F(\d{1,2})$/.exec(code);
-    if (m) {
-      const n = parseInt(m[1], 10);
+    if (code === 'Escape') return null; // 取消
+    const f = /^F(\d{1,2})$/.exec(code);
+    if (f) {
+      const n = parseInt(f[1], 10);
       if (n >= 1 && n <= 12) return `F${n}`;
     }
-    return null;
+    if (/^Key[A-Z]$/.test(code)) return code;          // KeyA -> KeyA
+    const d = /^Digit([0-9])$/.exec(code);
+    if (d) return `Num${d[1]}`;                          // Digit1 -> Num1（rdev 数字行用 Num*）
+    const map: Record<string, string> = {
+      Tab: 'Tab', Enter: 'Return', Delete: 'Delete', Backspace: 'Backspace',
+      Space: 'Space', Pause: 'Pause', ScrollLock: 'ScrollLock', PrintScreen: 'PrintScreen',
+      CapsLock: 'CapsLock', Backquote: 'BackQuote', Minus: 'Minus', Equal: 'Equal',
+      BracketLeft: 'LeftBracket', BracketRight: 'RightBracket', Backslash: 'BackSlash',
+      Semicolon: 'SemiColon', Quote: 'Quote', Comma: 'Comma', Period: 'Dot', Slash: 'Slash',
+      ArrowUp: 'UpArrow', ArrowDown: 'DownArrow', ArrowLeft: 'LeftArrow', ArrowRight: 'RightArrow',
+      Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+    };
+    return map[code] ?? null;
   };
 
-  // 捕获热键：监听下一次真实按键
+  // token -> 显示标签
+  const tokenToLabel = (tok: string): string => {
+    if (!tok) return 'Ins';
+    if (tok === 'Ins') return 'Ins';
+    if (/^Key([A-Z])$/.test(tok)) return tok.slice(3);
+    if (/^Num([0-9])$/.test(tok)) return tok.slice(3);
+    if (tok === 'Return') return 'Enter';
+    if (tok === 'BackSlash') return '\\';
+    if (tok === 'ForwardSlash') return '/';
+    if (tok === 'LeftBracket') return '[';
+    if (tok === 'RightBracket') return ']';
+    if (tok === 'SemiColon') return ';';
+    if (tok === 'Quote') return "'";
+    if (tok === 'BackQuote') return '`';
+    if (tok === 'Minus') return '-';
+    if (tok === 'Equal') return '=';
+    if (tok === 'Comma') return ',';
+    if (tok === 'Dot') return '.';
+    if (tok === 'Space') return 'Space';
+    if (tok === 'Backspace') return 'Backspace';
+    if (tok === 'Delete') return 'Delete';
+    if (tok === 'ScrollLock') return 'ScrollLock';
+    if (tok === 'PrintScreen') return 'PrintScreen';
+    if (tok === 'CapsLock') return 'CapsLock';
+    if (tok === 'UpArrow') return '↑';
+    if (tok === 'DownArrow') return '↓';
+    if (tok === 'LeftArrow') return '←';
+    if (tok === 'RightArrow') return '→';
+    return tok;
+  };
+
+  // 捕获热键：监听下一次真实按键（支持任意键，Esc 取消）
   useEffect(() => {
     if (!capturing) return;
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      const token = codeToHotkey(e.code);
+      const token = codeToToken(e.code);
       setCapturing(false);
       if (token) {
         updateSettings({ autofillHotkey: token });
@@ -632,8 +675,8 @@ export function SettingsPanel() {
             </div>
             <p className="text-xs text-[var(--moon-faint)] mb-3">
               {isEn
-                ? 'Select an entry (or copy its account/password), then focus the login field in your browser and press the hotkey: it fills username, presses Enter, then fills password. Clipboard is cleared after filling.'
-                : '选中某条账号（或复制其账号/密码）后，在浏览器里点进登录框，按此热键：先填账号、回车、再填密码（填完自动清空剪贴板）。'}
+                ? 'Select an entry (or copy its account/password), then focus the login field in your browser and press the hotkey: it fills username, presses Tab to jump to password, then fills password. Clipboard is cleared after filling. (No auto Enter — you log in yourself.)'
+                : '选中某条账号（或复制其账号/密码）后，在浏览器里点进登录框，按此热键：先填账号、Tab 跳到密码框、再填密码（填完自动清空剪贴板，不自动回车，由你自己登录）。'}
             </p>
             <div className="flex items-center gap-2">
               {capturing ? (
@@ -648,11 +691,11 @@ export function SettingsPanel() {
                   onClick={() => setCapturing(true)}
                   className="px-3 py-2 rounded-xl bg-[rgba(18,18,30,0.6)] border border-[rgba(192,200,216,0.12)] text-[var(--moon)] text-sm hover:border-[var(--mint)] transition-all min-w-[120px] text-left"
                 >
-                  {settings.autofillHotkey || 'Ins'}
+                  {tokenToLabel(settings.autofillHotkey)}
                 </button>
               )}
               <span className="text-xs text-[var(--moon-faint)]">
-                {isEn ? 'Click then press a key (Ins / F1-F12 / Pause)' : '点击后按一下按键即可（支持 Ins / F1-F12 / Pause）'}
+                {isEn ? 'Click then press any key (Esc to cancel)' : '点击后按一下任意按键即可（Esc 取消）'}
               </span>
             </div>
           </div>
