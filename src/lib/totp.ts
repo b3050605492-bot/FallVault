@@ -185,3 +185,47 @@ export async function getTotpWithRemaining(secretB32: string): Promise<{ code: s
   const code = await generateTotp(secretB32, now);
   return { code, remaining };
 }
+
+// ---- Steam 验证器算法（Steam Guard）----
+// Steam 用的是自己的算法：同样的 HMAC-SHA1 时间步，但输出 5 位自定义字母表字符（非标准 6 位数字）
+const STEAM_ALPHABET = '23456789BCDFGHJKMNPQRTVWXY';
+
+// base64（含 URL-safe）解码为字节
+function b64Decode(input: string): Uint8Array {
+  let b64 = input.replace(/-/g, '+').replace(/_/g, '/').trim();
+  while (b64.length % 4) b64 += '=';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// 由 Steam shared_secret（base64）生成 5 位 Steam 验证码
+export async function generateSteamTotp(secretB64: string, atSeconds?: number): Promise<string> {
+  const key = b64Decode(secretB64);
+  const time = Math.floor((atSeconds ?? Date.now() / 1000) / PERIOD);
+  const buffer = new ArrayBuffer(8);
+  const view = new DataView(buffer);
+  view.setUint32(0, Math.floor(time / 2 ** 32));
+  view.setUint32(4, time >>> 0);
+
+  const hmac = await hmacSha1(key, new Uint8Array(buffer));
+  // Steam 取最后 4 字节的低 31 位作为偏移起点
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const bin = ((hmac[offset] & 0x7f) << 24) | ((hmac[offset + 1] & 0xff) << 16) | ((hmac[offset + 2] & 0xff) << 8) | (hmac[offset + 3] & 0xff);
+  let code = bin >>> 0;
+  let out = '';
+  for (let i = 0; i < 5; i++) {
+    out += STEAM_ALPHABET[code % STEAM_ALPHABET.length];
+    code = Math.floor(code / STEAM_ALPHABET.length);
+  }
+  return out;
+}
+
+// 返回 { code, remainingSeconds }（Steam 同样 30 秒周期）
+export async function getSteamWithRemaining(secretB64: string): Promise<{ code: string; remaining: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const remaining = PERIOD - (now % PERIOD);
+  const code = await generateSteamTotp(secretB64, now);
+  return { code, remaining };
+}

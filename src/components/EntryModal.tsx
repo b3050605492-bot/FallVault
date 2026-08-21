@@ -23,7 +23,7 @@ export function EntryModal() {
   const isEditing = !!editingEntry;
 
   const [form, setForm] = useState<Partial<Entry>>({
-    title: '', username: '', password: '', website: '', notes: '', icon: '', folder_id: null, is_favorite: false,
+    title: '', username: '', password: '', website: '', notes: '', icon: '', folder_id: null, is_favorite: false, totp_type: 'totp',
   });
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [showPassword, setShowPassword] = useState(false);
@@ -53,7 +53,7 @@ export function EntryModal() {
       getAttachments(editingEntry.id).then(setAttachments);
     } else {
       setForm({
-        title: '', username: '', password: '', website: '', notes: '', icon: '', folder_id: null, is_favorite: false,
+        title: '', username: '', password: '', website: '', notes: '', icon: '', folder_id: null, is_favorite: false, totp_type: 'totp',
       });
       setCustomIcon(null);
       setCustomFields([]);
@@ -555,17 +555,30 @@ export function EntryModal() {
             )}
           </div>
 
-          {/* 两步验证密钥 (TOTP) */}
+          {/* 两步验证密钥 (TOTP / Steam) */}
           <div>
             <label className="text-xs text-[var(--moon-faint)] mb-1 block flex items-center gap-1.5">
               <KeyRound size={11} /> 两步验证 (2FA) 密钥
             </label>
+            {/* 类型选择：标准 TOTP 或 Steam 验证器 */}
+            <div className="flex gap-2 mb-2">
+              {(['totp', 'steam'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setForm({ ...form, totp_type: t })}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${form.totp_type === t ? 'bg-[var(--mint)] text-[#0d0d18]' : 'bg-[rgba(210,210,220,0.08)] text-[var(--moon-dim)] hover:text-[var(--moon)]'}`}
+                >
+                  {t === 'totp' ? (isEn ? 'TOTP (6位)' : 'TOTP（6 位）') : (isEn ? 'Steam Guard' : 'Steam 验证器')}
+                </button>
+              ))}
+            </div>
             <input
               value={form.totp_secret || ''}
               onChange={e => {
                 const raw = e.target.value.trim();
-                // 智能识别：Google 批量迁移链接 → 取第一个条目的 secret；otpauth:// → 提取 secret；否则按明文密钥
-                if (raw.startsWith('otpauth-migration://')) {
+                const isSteam = form.totp_type === 'steam';
+                if (!isSteam && raw.startsWith('otpauth-migration://')) {
                   const list = parseGoogleMigration(raw);
                   if (list.length > 0) {
                     setForm({ ...form, totp_secret: list[0].secret });
@@ -575,24 +588,27 @@ export function EntryModal() {
                     setForm({ ...form, totp_secret: raw });
                     setTotpInfo(null);
                   }
-                } else if (raw.startsWith('otpauth://')) {
+                } else if (!isSteam && raw.startsWith('otpauth://')) {
                   const s = parseOtpAuth(raw);
                   setForm({ ...form, totp_secret: s || raw });
                   setTotpInfo(s ? { fromMigration: false } : null);
                 } else {
+                  // Steam 类型：直接存 shared_secret（base64）；TOTP 类型：存明文/提取后的密钥
                   setForm({ ...form, totp_secret: raw });
                   setTotpInfo(null);
                 }
               }}
-              placeholder="粘贴 TOTP 密钥 / otpauth:// URI / 谷歌验证器迁移链接"
+              placeholder={form.totp_type === 'steam' ? '粘贴 Steam shared_secret（base64）' : '粘贴 TOTP 密钥 / otpauth:// URI / 谷歌验证器迁移链接'}
               className="rune-input w-full px-3 py-2.5 text-sm font-mono"
             />
             {form.totp_secret && (
               <p className="text-[11px] text-[var(--mint)] mt-1.5 flex items-center gap-1">
                 <RefreshCw size={10} />
-                {totpInfo?.fromMigration && totpInfo.name
-                  ? `已从迁移链接解析「${totpInfo.name}」：保存后卡片上会实时显示 6 位验证码`
-                  : '保存后卡片上会实时显示 6 位验证码'}
+                {form.totp_type === 'steam'
+                  ? (totpInfo?.fromMigration && totpInfo.name ? `已从迁移链接解析「${totpInfo.name}」：` : '') + '保存后卡片上会实时显示 5 位 Steam 验证码'
+                  : (totpInfo?.fromMigration && totpInfo.name
+                    ? `已从迁移链接解析「${totpInfo.name}」：保存后卡片上会实时显示 6 位验证码`
+                    : '保存后卡片上会实时显示 6 位验证码')}
               </p>
             )}
           </div>

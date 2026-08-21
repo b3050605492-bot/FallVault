@@ -1,6 +1,6 @@
 [package]
 name = "fallvault"
-version = "1.0.0"
+version = "1.1.0"
 description = "FallVault - A modern anime-themed local password manager"
 authors = ["Fall"]
 edition = "2021"
