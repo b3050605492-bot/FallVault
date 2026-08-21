@@ -5,7 +5,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { toggleFavorite, deleteEntry } from '@/lib/db';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { getTotpWithRemaining, getSteamWithRemaining } from '@/lib/totp';
+import { getTotpWithRemaining } from '@/lib/totp';
 import type { Entry } from '@/types';
 import { setFillTarget } from '@/lib/autofill';
 
@@ -43,14 +43,12 @@ export function EntryDetail() {
     }
   }, [isDetailOpen, selectedEntryId]);
 
-  // TOTP / Steam 刷新
+  // TOTP 刷新
   useEffect(() => {
     if (!isDetailOpen || !entry?.totp_secret) return;
-    const isSteam = entry.totp_type === 'steam';
     let cancelled = false;
     const refresh = () => {
-      (isSteam ? getSteamWithRemaining(entry.totp_secret!) : getTotpWithRemaining(entry.totp_secret!))
-        .then((v) => { if (!cancelled) setTotp(v); }).catch(() => {});
+      getTotpWithRemaining(entry.totp_secret!).then((v) => { if (!cancelled) setTotp(v); }).catch(() => {});
     };
     refresh();
     const t1 = setInterval(refresh, 30000);
@@ -58,7 +56,7 @@ export function EntryDetail() {
       setTotp((p) => (p ? { ...p, remaining: Math.max(0, p.remaining - 1) } : p));
     }, 1000);
     return () => { cancelled = true; clearInterval(t1); clearInterval(t2); };
-  }, [isDetailOpen, entry?.totp_secret, entry?.totp_type]);
+  }, [isDetailOpen, entry?.totp_secret]);
 
   if (!isDetailOpen || !entry) return null;
 
@@ -185,7 +183,7 @@ export function EntryDetail() {
         {/* TOTP */}
         {entry.totp_secret && totp && (
           <div className="mt-3 flex items-center gap-2 group">
-            <span className="text-[11px] text-[var(--moon-dim)] w-12 font-semibold uppercase tracking-wider">{entry.totp_type === 'steam' ? 'Steam' : '2FA'}</span>
+            <span className="text-[11px] text-[var(--moon-dim)] w-12 font-semibold uppercase tracking-wider">2FA</span>
             <code className="flex-1 text-base font-mono tracking-[0.3em]" style={{ color: 'var(--mint)' }}>{totp.code}</code>
             <div className="relative w-10 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(192,200,216,0.15)' }}>
               <div className="absolute left-0 top-0 bottom-0 rounded-full transition-all duration-1000 ease-linear"

@@ -22,7 +22,6 @@ export interface Entry {
   website: string;
   notes: string;
   totp_secret?: string;
-  totp_type?: 'totp' | 'steam'; // TOTP 标准动态码 或 Steam 验证器
   icon: string;
   folder_id: number | null;
   is_favorite: boolean;

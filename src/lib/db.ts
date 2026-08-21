@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS entries (
   website TEXT DEFAULT '',
   notes TEXT DEFAULT '',
   totp_secret TEXT DEFAULT '',
-  totp_type TEXT DEFAULT 'totp',
   icon TEXT DEFAULT 'Lock',
   folder_id INTEGER DEFAULT NULL,
   is_favorite INTEGER DEFAULT 0,
@@ -100,7 +99,6 @@ export async function initDatabase(): Promise<Database> {
   const migrations = [
     "ALTER TABLE entries ADD COLUMN totp_secret TEXT DEFAULT ''",
     "ALTER TABLE entries ADD COLUMN custom_fields TEXT DEFAULT ''",
-    "ALTER TABLE entries ADD COLUMN totp_type TEXT DEFAULT 'totp'",
   ];
   for (const m of migrations) {
     try {
@@ -283,14 +281,13 @@ export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []):
     ? await encryptField(key as any, JSON.stringify(entry.customFields))
     : '';
   const result = await getDb().execute(
-    `INSERT INTO entries (title, username, password, totp_secret, totp_type, website, notes, icon, folder_id, is_favorite, custom_fields)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO entries (title, username, password, totp_secret, website, notes, icon, folder_id, is_favorite, custom_fields)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.title || '',
       entry.username ? await encryptField(key as any, entry.username) : '',
       entry.password ? await encryptField(key as any, entry.password) : '',
       entry.totp_secret ? await encryptField(key as any, entry.totp_secret) : '',
-      entry.totp_type || 'totp',
       entry.website || '',
       entry.notes ? await encryptField(key as any, entry.notes) : '',
       entry.icon || 'Lock',
@@ -331,7 +328,7 @@ export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: nu
   }
 
   const updateCols = [
-    'title = ?', 'username = ?', 'password = ?', 'totp_secret = ?', 'totp_type = ?', 'website = ?', 'notes = ?',
+    'title = ?', 'username = ?', 'password = ?', 'totp_secret = ?', 'website = ?', 'notes = ?',
     'icon = ?', 'folder_id = ?', 'is_favorite = ?', 'updated_at = datetime(\'now\', \'localtime\')',
   ];
   const updateParams: any[] = [
@@ -339,7 +336,6 @@ export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: nu
     entry.username ? await encryptField(key as any, entry.username) : '',
     entry.password ? await encryptField(key as any, entry.password) : '',
     entry.totp_secret ? await encryptField(key as any, entry.totp_secret) : '',
-    entry.totp_type || 'totp',
     entry.website,
     entry.notes ? await encryptField(key as any, entry.notes) : '',
     entry.icon,

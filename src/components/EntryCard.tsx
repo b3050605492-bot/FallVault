@@ -6,7 +6,7 @@ import { toggleFavorite, deleteEntry } from '@/lib/db';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { GlareHover } from '@/components/GlareHover';
-import { getTotpWithRemaining, getSteamWithRemaining } from '@/lib/totp';
+import { getTotpWithRemaining } from '@/lib/totp';
 import { ClickSpark } from '@/components/ClickSpark';
 import type { Entry } from '@/types';
 import { setFillTarget } from '@/lib/autofill';
@@ -39,14 +39,14 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
   const [isHovered, setIsHovered] = useState(false);
   const [totp, setTotp] = useState<{ code: string; remaining: number } | null>(null);
 
-  // TOTP 定时刷新（30 秒一次 + 每 1 秒更新剩余倒计时）；Steam 类型用 Steam 算法
+  // TOTP 定时刷新（30 秒一次 + 每 1 秒更新剩余倒计时）
   useEffect(() => {
     if (!entry.totp_secret) return;
-    const isSteam = entry.totp_type === 'steam';
     let cancelled = false;
     const refresh = () => {
-      (isSteam ? getSteamWithRemaining(entry.totp_secret!) : getTotpWithRemaining(entry.totp_secret!))
-        .then((v) => { if (!cancelled) setTotp(v); }).catch(() => {});
+      getTotpWithRemaining(entry.totp_secret!).then((v) => {
+        if (!cancelled) setTotp(v);
+      }).catch(() => {});
     };
     refresh();
     const t1 = setInterval(refresh, 30000);
@@ -54,7 +54,7 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
       setTotp((prev) => prev ? { ...prev, remaining: Math.max(0, prev.remaining - 1) } : prev);
     }, 1000);
     return () => { cancelled = true; clearInterval(t1); clearInterval(t2); };
-  }, [entry.totp_secret, entry.totp_type]);
+  }, [entry.totp_secret]);
 
   const faviconUrl = getFaviconUrl(entry.website);
   const hasCustomIcon = entry.icon && entry.icon !== 'Lock' && entry.icon !== '';

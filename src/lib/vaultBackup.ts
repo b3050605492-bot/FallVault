@@ -77,7 +77,6 @@ interface BackupData {
     website: string;
     notes: string;
     totp_secret: string;
-    totp_type?: string;
     icon: string;
     folder_id: number | null;
     is_favorite: boolean;
@@ -158,7 +157,6 @@ export async function buildBackupContent(
       website: e.website || '',
       notes: await decrypt(e.notes || ''),
       totp_secret: await decrypt(e.totp_secret || ''),
-      totp_type: (e as any).totp_type || 'totp',
       icon: e.icon || '',
       folder_id: e.folder_id ?? null,
       is_favorite: !!e.is_favorite,
@@ -334,11 +332,10 @@ async function applyBackupContent(password: string, text: string): Promise<Resto
       continue;
     }
     const r = await d.execute(
-      `INSERT INTO entries (title, username, password, totp_secret, totp_type, website, notes, icon, folder_id, is_favorite, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO entries (title, username, password, totp_secret, website, notes, icon, folder_id, is_favorite, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         e.title, await enc(e.username), await enc(e.password), await enc(e.totp_secret),
-        e.totp_type || 'totp',
         e.website, await enc(e.notes), e.icon || 'Lock',
         e.folder_id != null ? (folderIdMap.get(e.folder_id) ?? null) : null,
         e.is_favorite ? 1 : 0, e.created_at || '', e.updated_at || '',
