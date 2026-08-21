@@ -1,17 +1,17 @@
 import { useAppStore } from '@/stores/appStore';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { resourceDir } from '@tauri-apps/api/path';
+import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { DEFAULT_BG_TOKEN } from '@/lib/constants';
 
 // 把 @resource:xxx 标记解析为安装包 resources 目录下的绝对路径
-// 这样内置背景图片随安装包分发，不依赖写死的绝对路径
+// 优先用 Rust 端 resolve_resource（同时覆盖打包安装与直接运行 exe 两种情况）
 async function resolveSource(src: string): Promise<string> {
   if (!src || !src.startsWith('@resource:')) return src;
   const name = src.slice('@resource:'.length);
   try {
-    const dir = await resourceDir();
-    return `${dir}/${name}`;
+    const path = await invoke<string>('resolve_resource', { name });
+    return path || src;
   } catch {
     return src;
   }

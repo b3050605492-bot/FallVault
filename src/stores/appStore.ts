@@ -89,7 +89,15 @@ function loadSettings(): AppSettings {
     const raw = localStorage.getItem('fallvault-settings');
     if (raw) {
       const saved = JSON.parse(raw);
-      return { ...defaultSettings, ...saved, background: { ...defaultSettings.background, ...(saved.background || {}) } };
+      const merged = { ...defaultSettings, ...saved, background: { ...defaultSettings.background, ...(saved.background || {}) } };
+      // 迁移：旧版保存的 shiro 视频路径（写死绝对路径、换机器读不到）统一替换为内置图片
+      const OLD_SHIRO = 'D:\\Steam\\steamapps\\workshop\\content\\431960\\3640752243\\白凪shiro.mp4';
+      if (merged.background?.source === OLD_SHIRO || (merged.background?.source || '').toLowerCase().endsWith('白凪shiro.mp4')) {
+        merged.background.type = 'image';
+        merged.background.source = DEFAULT_BG_TOKEN;
+        merged.background.name = '默认壁纸';
+      }
+      return merged;
     }
   } catch { }
   return defaultSettings;

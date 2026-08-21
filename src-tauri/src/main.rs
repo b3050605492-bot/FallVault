@@ -40,6 +40,28 @@ fn get_exe_dir() -> Result<String, String> {
     Ok(dir)
 }
 
+// 解析内置资源文件：依次尝试 resourceDir/name 与 exeDir/resources/name，
+// 返回第一个真实存在的路径；都不存在则回退 exeDir/resources/name（交给上层报错）
+#[tauri::command]
+fn resolve_resource(app: tauri::AppHandle, name: String) -> String {
+    use tauri::Manager;
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(rd) = app.path().resource_dir() {
+        candidates.push(format!("{}/{}", rd.to_string_lossy(), name));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(format!("{}/resources/{}", parent.to_string_lossy(), name));
+        }
+    }
+    for c in &candidates {
+        if std::path::Path::new(c).exists() {
+            return c.clone();
+        }
+    }
+    candidates.last().cloned().unwrap_or_default()
+}
+
 // 以下命令用 std::fs 直接读写，绕过 fs 插件的作用域限制（备份/媒体放在 exe 同级目录）
 #[tauri::command]
 fn create_dir_all(path: String) -> Result<(), String> {
@@ -176,6 +198,7 @@ fn main() {
             copy_file,
             write_file_bytes,
             read_file_bytes,
+            resolve_resource,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

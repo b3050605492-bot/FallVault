@@ -74,7 +74,7 @@ export function SettingsPanel() {
     });
   };
 
-  // 内置壁纸预览缩略图（支持 @resource: 标记，运行时解析为安装包 resources 路径）
+  // 内置壁纸预览缩略图（支持 @resource: 标记，运行时经 Rust resolve_resource 解析）
   const BuiltinThumb = ({ preview }: { preview: string }) => {
     const [url, setUrl] = useState('');
     useEffect(() => {
@@ -84,8 +84,10 @@ export function SettingsPanel() {
         return;
       }
       const name = preview.slice('@resource:'.length);
-      resourceDir().then((dir) => {
-        if (mounted) setUrl(convertFileSrc(`${dir}/${name}`));
+      import('@tauri-apps/api/core').then(({ invoke }) =>
+        invoke<string>('resolve_resource', { name })
+      ).then((path) => {
+        if (mounted) setUrl(path ? convertFileSrc(path) : '');
       }).catch(() => {});
       return () => { mounted = false; };
     }, [preview]);
