@@ -10,7 +10,6 @@ import { exportToXlsx, exportToCsv, exportToJson, buildTxt } from '@/lib/exportE
 import { importBrowserCsv } from '@/lib/csvImport';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile, mkdir } from '@tauri-apps/plugin-fs';
-import { listen } from '@tauri-apps/api/event';
 
 export function TopBar() {
   const { searchQuery, setSearchQuery, settings, updateSettings } = useAppStore();
@@ -20,18 +19,6 @@ export function TopBar() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-
-  // 聚焦搜索框（供全局快捷键 / 托盘「搜索」调用）
-  const focusSearch = () => {
-    setSearchQuery('');
-    setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); }, 50);
-  };
-
-  useEffect(() => {
-    // 全局快捷键 Ctrl+Space / 托盘「搜索」→ 显示窗口并聚焦搜索框
-    const un = listen('fallvault:focus-search', () => focusSearch());
-    return () => { un.then((fn) => fn()).catch(() => {}); };
-  }, []);
 
   const toggleLanguage = () => {
     const next: 'zh' | 'en' = settings.language === 'zh' ? 'en' : 'zh';

@@ -12,7 +12,6 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager, WindowEvent,
 };
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 // 用系统文件管理器打开指定文件夹（Windows 下调用 explorer）
 #[tauri::command]
@@ -171,27 +170,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, _event| {
-                    // 全局快捷键：Ctrl+Space → 显示窗口并聚焦搜索框（仅注册了这一组）
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                    }
-                    let _ = app.emit("fallvault:focus-search", ());
-                })
-                .build(),
-        )
         .manage(Arc::new(AutofillState::new()))
         .setup(|app| {
-            // 系统托盘：Show / 搜索 / Lock / Quit
+            // 系统托盘：Show / Lock / Quit
             let show_i = MenuItem::with_id(app, "show", "打开 FallVault", true, None::<&str>)?;
-            let search_i = MenuItem::with_id(app, "search", "搜索账号", true, None::<&str>)?;
             let lock_i = MenuItem::with_id(app, "lock", "锁定", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &search_i, &lock_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&show_i, &lock_i, &quit_i])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -212,14 +197,6 @@ fn main() {
                                 let _ = app.emit("fallvault:lock", ());
                             }
                         }
-                    }
-                    "search" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.unminimize();
-                            let _ = w.set_focus();
-                        }
-                        let _ = app.emit("fallvault:focus-search", ());
                     }
                     "lock" => {
                         let _ = app.emit("fallvault:lock", ());
@@ -246,11 +223,6 @@ fn main() {
             {
                 let state = app.state::<Arc<AutofillState>>();
                 start_autofill(app.app_handle().clone(), state.inner().clone());
-            }
-
-            // 注册全局快捷键：Ctrl+Space → 显示窗口并聚焦搜索框
-            if let Err(e) = app.global_shortcut().register("CmdOrCtrl+Space") {
-                eprintln!("注册全局快捷键失败: {}", e);
             }
 
             Ok(())
