@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Plus, Moon, Sun, Globe, Download, Upload, FileSpreadsheet, FileText, FileJson, FileCode2 } from 'lucide-react';
+import { Search, Plus, Moon, Sun, Globe, Download, Upload, FileSpreadsheet, FileText, FileJson, FileCode2, FileInput } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useToastStore } from '@/stores/toastStore';
 import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
 import { SpecularButton } from '@/components/SpecularButton';
 import { exportToXlsx, exportToCsv, exportToJson, buildTxt } from '@/lib/exportEntries';
+import { importBrowserCsv } from '@/lib/csvImport';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile, mkdir } from '@tauri-apps/plugin-fs';
+import { listen } from '@tauri-apps/api/event';
 
 export function TopBar() {
   const { searchQuery, setSearchQuery, settings, updateSettings } = useAppStore();
@@ -17,6 +19,19 @@ export function TopBar() {
   const isEn = settings.language === 'en';
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+
+  // 聚焦搜索框（供全局快捷键 / 托盘「搜索」调用）
+  const focusSearch = () => {
+    setSearchQuery('');
+    setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); }, 50);
+  };
+
+  useEffect(() => {
+    // 全局快捷键 Ctrl+Space / 托盘「搜索」→ 显示窗口并聚焦搜索框
+    const un = listen('fallvault:focus-search', () => focusSearch());
+    return () => { un.then((fn) => fn()).catch(() => {}); };
+  }, []);
 
   const toggleLanguage = () => {
     const next: 'zh' | 'en' = settings.language === 'zh' ? 'en' : 'zh';
@@ -61,6 +76,10 @@ export function TopBar() {
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const exportMenuPanelRef = useRef<HTMLDivElement>(null);
 
+  // 导入菜单定位
+  const importMenuRef = useRef<HTMLDivElement>(null);
+  const [importMenuPos, setImportMenuPos] = useState<{ top: number; right: number } | null>(null);
+
   // 用 document 级监听关闭导出菜单（fixed 遮罩会被 backdrop-filter 破坏，改用这个）
   useEffect(() => {
     if (!exportOpen) return;
@@ -80,6 +99,21 @@ export function TopBar() {
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [exportOpen]);
+
+  // 导入菜单：定位 + 点击外部关闭
+  useEffect(() => {
+    if (!importOpen) return;
+    if (importMenuRef.current) {
+      const r = importMenuRef.current.getBoundingClientRect();
+      setImportMenuPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
+    }
+    const onDocClick = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      if (importMenuRef.current && !importMenuRef.current.contains(el)) setImportOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [importOpen]);
 
   const handleExport = async (format: 'xlsx' | 'txt' | 'csv' | 'json') => {
     const state = useAppStore.getState();
@@ -169,14 +203,58 @@ export function TopBar() {
           {settings.theme === 'default' ? <Moon size={17} /> : <Sun size={17} />}
         </button>
 
-        {/* 导入按钮 */}
-        <button
-          onClick={() => import('@tauri-apps/api/event').then((m) => m.emit('fallvault:open-import')).catch(() => {})}
-          className="rune-btn p-2.5 rounded-xl text-[var(--moon-dim)] hover:text-[var(--moon)]"
-          title={isEn ? 'Import entries' : '导入账号'}
-        >
-          <Upload size={17} />
-        </button>
+        {/* 导入按钮 + 下拉菜单 */}
+        <div className="relative" ref={importMenuRef}>
+          <button
+            onClick={() => setImportOpen(!importOpen)}
+            className="rune-btn p-2.5 rounded-xl text-[var(--moon-dim)] hover:text-[var(--moon)]"
+            title={isEn ? 'Import entries' : '导入账号'}
+          >
+            <Upload size={17} />
+          </button>
+          {importOpen && createPortal(
+            <div
+              className="fixed z-[90] w-60 p-1.5 rounded-2xl"
+              style={{
+                position: 'fixed',
+                top: importMenuPos?.top ?? 60,
+                right: importMenuPos?.right ?? 20,
+                background: 'var(--glass-bg)',
+                border: '1px solid var(--glass-border)',
+                backdropFilter: 'blur(var(--glass-blur)) saturate(var(--glass-saturate))',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+              }}
+            >
+              <button
+                onClick={() => { setImportOpen(false); import('@tauri-apps/api/event').then((m) => m.emit('fallvault:open-import')).catch(() => {}); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-[var(--moon)] hover:bg-[rgba(210,210,220,0.1)] transition-all"
+              >
+                <FileText size={15} style={{ color: 'var(--mint)' }} />
+                {isEn ? 'Import backup (.fvault)' : '导入备份 (.fvault)'}
+              </button>
+              <button
+                onClick={async () => {
+                  setImportOpen(false);
+                  try {
+                    const { imported, skipped } = await importBrowserCsv();
+                    addToast(
+                      isEn ? `Imported ${imported} accounts${skipped ? ` (${skipped} skipped)` : ''}` : `已导入 ${imported} 个账号${skipped ? `（跳过 ${skipped} 个）` : ''}`,
+                      'success'
+                    );
+                    useAppStore.getState().refreshAll();
+                  } catch (e: any) {
+                    addToast(isEn ? 'Import failed' : '导入失败', 'error');
+                  }
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-[var(--moon)] hover:bg-[rgba(210,210,220,0.1)] transition-all"
+              >
+                <FileInput size={15} style={{ color: 'var(--warning)' }} />
+                {isEn ? 'From browser CSV (Chrome/Edge)' : '从浏览器 CSV 导入（Chrome/Edge）'}
+              </button>
+            </div>,
+            document.body
+          )}
+        </div>
 
         {/* 导出按钮 + 下拉菜单 */}
         <div className="relative" ref={exportMenuRef}>
