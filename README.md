@@ -68,7 +68,7 @@
 
 | 主界面 | 设置面板 |
 |--------|----------|
-| ![主界面](docs/screenshots/01-main.png) | ![设置面板](docs/screenshots/02-settings.png) |
+| ![主密码界面](docs/screenshots/01-main.png) | ![设置面板](docs/screenshots/02-settings.png) |
 
 | 账号详情页 | 新建账号 | 账号卡片 |
 |------------|----------|----------|
