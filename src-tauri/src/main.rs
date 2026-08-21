@@ -1,6 +1,11 @@
 // Prevents additional console window on Windows, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// 半自动浏览器填充：全局热键（默认 Ins）→ 把待填账号/密码粘贴进当前焦点输入框
+mod autofill;
+use autofill::{AutofillState, FillTarget, start_autofill};
+use std::sync::Arc;
+
 use std::process::Command;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -137,12 +142,25 @@ fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
     std::fs::read(&path).map_err(|e| format!("{}", e))
 }
 
+// 半自动填充：前端写入"待填账号/密码"
+#[tauri::command]
+fn set_fill_target(state: tauri::State<Arc<AutofillState>>, target: Option<FillTarget>) {
+    *state.target.lock().unwrap() = target;
+}
+
+// 半自动填充：前端更新热键（字符串，如 "Ins"）
+#[tauri::command]
+fn set_autofill_hotkey(state: tauri::State<Arc<AutofillState>>, hotkey: String) {
+    *state.hotkey.lock().unwrap() = hotkey;
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(Arc::new(AutofillState::new()))
         .setup(|app| {
             // 系统托盘：Show / Lock / Quit
             let show_i = MenuItem::with_id(app, "show", "打开 FallVault", true, None::<&str>)?;
@@ -183,6 +201,12 @@ fn main() {
                 });
             }
 
+            // 启动半自动填充全局热键监听
+            {
+                let state = app.state::<Arc<AutofillState>>();
+                start_autofill(app.app_handle().clone(), state.inner().clone());
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -199,6 +223,8 @@ fn main() {
             write_file_bytes,
             read_file_bytes,
             resolve_resource,
+            set_fill_target,
+            set_autofill_hotkey,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

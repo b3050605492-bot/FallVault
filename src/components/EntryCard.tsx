@@ -9,6 +9,7 @@ import { GlareHover } from '@/components/GlareHover';
 import { getTotpWithRemaining } from '@/lib/totp';
 import { ClickSpark } from '@/components/ClickSpark';
 import type { Entry } from '@/types';
+import { setFillTarget } from '@/lib/autofill';
 
 function getFaviconUrl(website: string): string | null {
   if (!website) return null;
@@ -72,6 +73,10 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
       : field === 'totp' ? (isEn ? 'Code copied' : '验证码已复制')
       : (isEn ? 'Username copied' : '账号已复制'), 'success'
     );
+    // 复制账号或密码时，把该条目设为半自动填充的待填目标
+    if (field === 'username' || field === 'password') {
+      setFillTarget({ username: entry.username || '', password: entry.password || '' });
+    }
     setTimeout(() => setCopiedField(null), 2000);
   };
 

@@ -12,6 +12,7 @@ import { PasswordGenerator } from '@/components/PasswordGenerator';
 import { SecurityAuditModal } from '@/components/SecurityAuditModal';
 import { TotpMigrationModal } from '@/components/TotpMigrationModal';
 import { TitleBar } from '@/components/TitleBar';
+import { setAutofillHotkey } from '@/lib/autofill';
 import { LockScreen } from '@/components/LockScreen';
 import { ImportModal } from '@/components/ImportModal';
 import { useAppStore } from '@/stores/appStore';
@@ -65,6 +66,11 @@ function App() {
     const handler = () => setImportOpen(true);
     window.addEventListener('fallvault:open-import', handler);
     return () => window.removeEventListener('fallvault:open-import', handler);
+  }, []);
+
+  // 启动半自动填充：把当前设置的热键推给 Rust 端监听
+  useEffect(() => {
+    setAutofillHotkey(useAppStore.getState().settings.autofillHotkey || 'Ins').catch(() => {});
   }, []);
 
   // 首次安装（无已保存设置）时，自动把数据文件夹默认指向 exe 同级 data/ 并建好目录，开箱即用

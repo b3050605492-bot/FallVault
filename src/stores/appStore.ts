@@ -81,6 +81,7 @@ const defaultSettings: AppSettings = {
   autoBackupIntervalMin: 60,
   dataDir: '',
   customBackgrounds: [],
+  autofillHotkey: 'Ins',
 };
 
 // 从 localStorage 恢复设置

@@ -78,6 +78,7 @@ export interface AppSettings {
   autoBackupIntervalMin: number;
   dataDir: string; // 用户自定义数据文件夹（备份/壁纸/图标/附件统一存放）；为空则未设置（禁用自动备份与背景导入）
   customBackgrounds: { id: string; type: 'image' | 'video'; source: string; name: string }[]; // 用户上传的自定义背景清单
+  autofillHotkey: string; // 半自动填充热键（如 'Ins'），默认 'Ins'
 }
 
 // 三套主题定义（配色 + gradient-waves 背景色）

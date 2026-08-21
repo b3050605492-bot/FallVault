@@ -3,12 +3,12 @@ import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
 import { BUILTIN_WALLPAPERS, DEFAULT_BG_TOKEN } from '@/lib/constants';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { resourceDir } from '@tauri-apps/api/path';
-import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone } from 'lucide-react';
+import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard } from 'lucide-react';
 import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
 import { copyFile, removePath } from '@/lib/rustFs';
 import { getBackgroundsDir } from '@/lib/mediaPaths';
+import { setAutofillHotkey } from '@/lib/autofill';
 import { useToastStore } from '@/stores/toastStore';
 import { useState, useEffect } from 'react';
 import { createBackup, listBackups, getBackupDir, getDataDir, BackupInfo } from '@/lib/backupManager';
@@ -591,6 +591,34 @@ export function SettingsPanel() {
                   {isEn ? 'Clear' : '清除'}
                 </button>
               )}
+            </div>
+          </div>
+
+          {/* 半自动填充热键 */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Keyboard size={15} style={{ color: 'var(--mint)' }} />
+              <h3 className="text-sm font-semibold text-[var(--moon)]">{isEn ? 'Auto-fill Hotkey' : '半自动填充热键'}</h3>
+            </div>
+            <p className="text-xs text-[var(--moon-faint)] mb-3">
+              {isEn
+                ? 'Copy an account or password, then focus the login field in your browser and press the hotkey to fill username + password automatically. Clipboard is cleared after filling.'
+                : '复制某条账号或密码后，在浏览器里点进登录框，按此热键即可自动填入账号+密码（填完自动清空剪贴板）。'}
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                value={settings.autofillHotkey}
+                onChange={(e) => {
+                  const v = e.target.value.trim() || 'Ins';
+                  updateSettings({ autofillHotkey: v });
+                  setAutofillHotkey(v).catch(() => {});
+                }}
+                placeholder="Ins"
+                className="w-32 px-3 py-2 rounded-xl bg-[rgba(18,18,30,0.6)] border border-[rgba(192,200,216,0.12)] text-[var(--moon)] text-sm focus:outline-none focus:border-[var(--mint)]"
+              />
+              <span className="text-xs text-[var(--moon-faint)]">
+                {isEn ? 'Supported: Ins, F1-F12, Pause, Scroll' : '支持：Ins、F1-F12、Pause、Scroll'}
+              </span>
             </div>
           </div>
 
