@@ -43,19 +43,25 @@ export function EntryDetail() {
     }
   }, [isDetailOpen, selectedEntryId]);
 
-  // TOTP 刷新
+  // TOTP 刷新：每秒按真实时间计算剩余秒数，整 30 秒边界自动换新码
   useEffect(() => {
     if (!isDetailOpen || !entry?.totp_secret) return;
     let cancelled = false;
-    const refresh = () => {
-      getTotpWithRemaining(entry.totp_secret!).then((v) => { if (!cancelled) setTotp(v); }).catch(() => {});
+    let lastPeriod = -1;
+    const tick = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const period = Math.floor(now / 30);
+      const remaining = 30 - (now % 30);
+      if (period !== lastPeriod) {
+        lastPeriod = period;
+        getTotpWithRemaining(entry.totp_secret!).then((v) => { if (!cancelled) setTotp(v); }).catch(() => {});
+      } else if (!cancelled) {
+        setTotp((p) => (p ? { ...p, remaining } : p));
+      }
     };
-    refresh();
-    const t1 = setInterval(refresh, 30000);
-    const t2 = setInterval(() => {
-      setTotp((p) => (p ? { ...p, remaining: Math.max(0, p.remaining - 1) } : p));
-    }, 1000);
-    return () => { cancelled = true; clearInterval(t1); clearInterval(t2); };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => { cancelled = true; clearInterval(t); };
   }, [isDetailOpen, entry?.totp_secret]);
 
   if (!isDetailOpen || !entry) return null;

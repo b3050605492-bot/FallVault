@@ -39,21 +39,27 @@ export function EntryCard({ entry, index = 0 }: { entry: Entry; index?: number }
   const [isHovered, setIsHovered] = useState(false);
   const [totp, setTotp] = useState<{ code: string; remaining: number } | null>(null);
 
-  // TOTP 定时刷新（30 秒一次 + 每 1 秒更新剩余倒计时）
+  // TOTP 刷新：每秒按真实时间计算剩余秒数，整 30 秒边界自动换新码（无需手动刷新）
   useEffect(() => {
     if (!entry.totp_secret) return;
     let cancelled = false;
-    const refresh = () => {
-      getTotpWithRemaining(entry.totp_secret!).then((v) => {
-        if (!cancelled) setTotp(v);
-      }).catch(() => {});
+    let lastPeriod = -1;
+    const tick = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const period = Math.floor(now / 30);
+      const remaining = 30 - (now % 30);
+      if (period !== lastPeriod) {
+        lastPeriod = period;
+        getTotpWithRemaining(entry.totp_secret!).then((v) => {
+          if (!cancelled) setTotp(v);
+        }).catch(() => {});
+      } else if (!cancelled) {
+        setTotp((prev) => (prev ? { ...prev, remaining } : prev));
+      }
     };
-    refresh();
-    const t1 = setInterval(refresh, 30000);
-    const t2 = setInterval(() => {
-      setTotp((prev) => prev ? { ...prev, remaining: Math.max(0, prev.remaining - 1) } : prev);
-    }, 1000);
-    return () => { cancelled = true; clearInterval(t1); clearInterval(t2); };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => { cancelled = true; clearInterval(t); };
   }, [entry.totp_secret]);
 
   const faviconUrl = getFaviconUrl(entry.website);

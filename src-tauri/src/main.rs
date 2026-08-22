@@ -1,8 +1,11 @@
 // Prevents additional console window on Windows, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![allow(dependency_on_unit_never_type_fallback)]
 
 // 半自动浏览器填充：全局热键（默认 Ins）→ 把待填账号/密码粘贴进当前焦点输入框
 mod autofill;
+mod github_backup;
+pub use github_backup::*;
 use autofill::{start_autofill, AutofillState, FillTarget};
 use std::sync::Arc;
 
@@ -243,6 +246,9 @@ fn main() {
             resolve_resource,
             set_fill_target,
             set_autofill_hotkey,
+            github_list_repos,
+            github_upload_backup,
+            github_download_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

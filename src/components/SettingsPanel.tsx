@@ -3,7 +3,7 @@ import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
 import { BUILTIN_WALLPAPERS, DEFAULT_BG_TOKEN } from '@/lib/constants';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard } from 'lucide-react';
+import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard, Github, HelpCircle } from 'lucide-react';
 import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
 import { copyFile, removePath } from '@/lib/rustFs';
@@ -31,7 +31,12 @@ export function SettingsPanel() {
   const [backupPwd2, setBackupPwd2] = useState('');
   const [backupBusy, setBackupBusy] = useState(false);
   const [integrityChecking, setIntegrityChecking] = useState(false);
-  const [activeSection, setActiveSection] = useState<'basic' | 'appearance'>('appearance');
+  const [activeSection, setActiveSection] = useState<'basic' | 'appearance' | 'github'>('appearance');
+  const [ghToken, setGhToken] = useState('');
+  const [ghRepos, setGhRepos] = useState<string[]>([]);
+  const [ghRepo, setGhRepo] = useState('');
+  const [ghBusy, setGhBusy] = useState(false);
+  const [ghHelp, setGhHelp] = useState(false);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [backupDir, setBackupDir] = useState<string>('');
   const [dataDir, setDataDir] = useState<string>('');
@@ -394,6 +399,7 @@ export function SettingsPanel() {
           {([
             ['appearance', isEn ? 'Appearance' : '外观', Palette],
             ['basic', isEn ? 'Basics' : '基础', Settings2],
+            ['github', isEn ? 'GitHub Backup' : 'GitHub 备份', Github],
           ] as const).map(([id, label, Icon]) => (
             <button
               key={id}
@@ -931,7 +937,141 @@ export function SettingsPanel() {
           </div>
           </>)}
         </div>
+
+        {/* GitHub 备份 Tab（与 外观/基础 同级） */}
+        {activeSection === 'github' && (<>
+          <div className="flex items-center gap-2 mb-3">
+            <Github size={15} style={{ color: 'var(--mint)' }} />
+            <h3 className="text-sm font-semibold text-[var(--moon)]">{isEn ? 'GitHub Backup' : 'GitHub 备份'}</h3>
+            <button
+              onClick={() => setGhHelp(true)}
+              className="ml-auto text-[var(--moon-dim)] hover:text-[var(--mint)] transition-colors p-1 rounded-lg hover:bg-[rgba(210,210,220,0.08)]"
+              title={isEn ? 'How to use' : '使用教程'}
+            >
+              <HelpCircle size={16} />
+            </button>
+          </div>
+
+          <p className="text-[11px] text-[var(--moon-faint)] mb-4 leading-relaxed">
+            {isEn
+              ? 'Sync your encrypted .fvault backup to a private GitHub repo. Your master password is NEVER uploaded — only the encrypted file.'
+              : '把本地加密的 .fvault 备份同步到你的 GitHub 私有仓库。主密码绝不会上传，只同步已加密的文件。'}
+          </p>
+
+          <label className="text-xs text-[var(--moon-faint)] mb-1.5 block">{isEn ? 'GitHub Token (PAT)' : 'GitHub 令牌（PAT）'}</label>
+          <input
+            type="password"
+            value={ghToken}
+            onChange={(e) => setGhToken(e.target.value)}
+            placeholder={isEn ? 'ghp_xxx or github_pat_xxx' : 'ghp_xxx 或 github_pat_xxx'}
+            className="rune-input w-full px-3 py-2.5 text-sm bg-transparent mb-2"
+          />
+          <button
+            onClick={async () => {
+              if (!ghToken.trim()) { addToast(isEn ? 'Enter a token first' : '请先填写令牌', 'warning'); return; }
+              setGhBusy(true);
+              try {
+                const { invoke } = await import('@tauri-apps/api/core');
+                const repos = await invoke<string[]>('github_list_repos', { token: ghToken.trim() });
+                setGhRepos(repos);
+                addToast(isEn ? `Found ${repos.length} repos` : `找到 ${repos.length} 个仓库`, 'success');
+              } catch (e: any) {
+                addToast(isEn ? `Failed: ${String(e)}` : `失败：${String(e)}`, 'error');
+              } finally { setGhBusy(false); }
+            }}
+            disabled={ghBusy}
+            className="w-full text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all disabled:opacity-50 mb-3"
+          >
+            {ghBusy ? (isEn ? 'Loading…' : '获取中…') : (isEn ? 'List my repositories' : '获取我的仓库')}
+          </button>
+
+          {ghRepos.length > 0 && (
+            <div className="mb-3">
+              <label className="text-xs text-[var(--moon-faint)] mb-1.5 block">{isEn ? 'Select repository' : '选择仓库'}</label>
+              <select
+                value={ghRepo}
+                onChange={(e) => setGhRepo(e.target.value)}
+                className="rune-input w-full px-3 py-2.5 text-sm bg-transparent"
+              >
+                <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— choose —' : '— 请选择 —'}</option>
+                {ghRepos.map((r) => <option key={r} value={r} style={{ background: '#1A1A2E' }}>{r}</option>)}
+              </select>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                if (!ghToken.trim() || !ghRepo) { addToast(isEn ? 'Token and repo required' : '请先填令牌并选仓库', 'warning'); return; }
+                if (!dataDir) { addToast(isEn ? 'Set data folder first' : '请先设置数据文件夹', 'warning'); return; }
+                setGhBusy(true);
+                try {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  const msg = await invoke<string>('github_upload_backup', { token: ghToken.trim(), repo: ghRepo, dataDir });
+                  addToast(msg, 'success');
+                } catch (e: any) {
+                  addToast(isEn ? `Upload failed: ${String(e)}` : `上传失败：${String(e)}`, 'error');
+                } finally { setGhBusy(false); }
+              }}
+              disabled={ghBusy}
+              className="flex-1 text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              <Save size={13} /> {isEn ? 'Upload' : '上传备份'}
+            </button>
+            <button
+              onClick={async () => {
+                if (!ghToken.trim() || !ghRepo) { addToast(isEn ? 'Token and repo required' : '请先填令牌并选仓库', 'warning'); return; }
+                if (!dataDir) { addToast(isEn ? 'Set data folder first' : '请先设置数据文件夹', 'warning'); return; }
+                setGhBusy(true);
+                try {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  const msg = await invoke<string>('github_download_backup', { token: ghToken.trim(), repo: ghRepo, dataDir });
+                  addToast(msg + (isEn ? ' — restore via Backup menu' : ' — 去「加密备份」里恢复'), 'success');
+                } catch (e: any) {
+                  addToast(isEn ? `Download failed: ${String(e)}` : `下载失败：${String(e)}`, 'error');
+                } finally { setGhBusy(false); }
+              }}
+              disabled={ghBusy}
+              className="flex-1 text-xs px-3 py-2.5 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              <Github size={13} /> {isEn ? 'Download' : '下载备份'}
+            </button>
+          </div>
+        </>)}
+
       </div>
+
+      {/* GitHub 备份使用教程弹窗 */}
+      {ghHelp && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-6"
+          style={{ background: 'rgba(8,8,16,0.6)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setGhHelp(false)}
+        >
+          <div
+            className="rune-panel w-full max-w-md rounded-3xl p-6 max-h-[86vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-[var(--moon)]">{isEn ? 'GitHub Backup Guide' : 'GitHub 备份教程'}</h2>
+              <button onClick={() => setGhHelp(false)} className="text-[var(--moon-dim)] hover:text-[var(--moon)] p-1.5 rounded-lg hover:bg-[rgba(210,210,220,0.08)]">
+                <X size={18} />
+              </button>
+            </div>
+            <ol className="space-y-3 text-[13px] text-[var(--moon-dim)] leading-relaxed list-decimal pl-5">
+              <li>{isEn ? 'Go to GitHub → avatar → Settings → Developer settings → Personal access tokens → generate a token (classic).' : 'GitHub 右上角头像 → Settings → Developer settings → Personal access tokens → 生成一个 token（classic）。'}</li>
+              <li>{isEn ? 'Check the "repo" scope (full repo read/write), then Generate and copy the token (starts with ghp_ or github_pat_).' : '勾选 repo 权限（读写仓库），生成后复制令牌（ghp_ 或 github_pat_ 开头）。'}</li>
+              <li>{isEn ? 'Paste the token above, click "List my repositories", then pick a PRIVATE repo from the dropdown.' : '把令牌粘贴到上方，点「获取我的仓库」，在下拉里选一个私有仓库。'}</li>
+              <li>{isEn ? 'Click "Upload" to push your encrypted .fvault; "Download" pulls it back (then restore via the Backup menu).' : '点「上传备份」把加密的 .fvault 推上去；「下载备份」拉回来（再去「加密备份」里恢复）。'}</li>
+            </ol>
+            <div className="mt-4 p-3 rounded-xl text-[11px] leading-relaxed" style={{ background: 'rgba(212,112,112,0.1)', color: '#D47070' }}>
+              {isEn
+                ? 'Your token stays only in this app\'s memory and is never uploaded. The master password is also NEVER uploaded — only the already-encrypted .fvault file syncs.'
+                : '令牌只存在本软件内存里，绝不上传；主密码也绝不上传，同步的只是已经加密好的 .fvault 文件。'}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 修改主密码弹窗 */}
       {showPwdModal && (
