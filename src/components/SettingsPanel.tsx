@@ -3,7 +3,7 @@ import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
 import { BUILTIN_WALLPAPERS, DEFAULT_BG_TOKEN } from '@/lib/constants';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, RotateCcw, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard, Github, HelpCircle } from 'lucide-react';
+import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard, Github, HelpCircle } from 'lucide-react';
 import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
 import { copyFile, removePath } from '@/lib/rustFs';
@@ -11,7 +11,7 @@ import { getBackgroundsDir } from '@/lib/mediaPaths';
 import { setAutofillHotkey } from '@/lib/autofill';
 import { useToastStore } from '@/stores/toastStore';
 import { useState, useEffect } from 'react';
-import { createBackup, listBackups, getBackupDir, getDataDir, BackupInfo } from '@/lib/backupManager';
+import { getDataDir } from '@/lib/backupManager';
 
 export function SettingsPanel() {
   const { settings, updateSettings, setIsSettingsOpen, setIsTotpMigrationOpen } = useAppStore();
@@ -33,12 +33,19 @@ export function SettingsPanel() {
   const [integrityChecking, setIntegrityChecking] = useState(false);
   const [activeSection, setActiveSection] = useState<'basic' | 'appearance' | 'github'>('appearance');
   const [ghToken, setGhToken] = useState('');
-  const [ghRepos, setGhRepos] = useState<string[]>([]);
+  const [ghRepos, setGhRepos] = useState<{ full_name: string }[]>([]);
   const [ghRepo, setGhRepo] = useState('');
   const [ghBusy, setGhBusy] = useState(false);
   const [ghHelp, setGhHelp] = useState(false);
-  const [backups, setBackups] = useState<BackupInfo[]>([]);
-  const [backupDir, setBackupDir] = useState<string>('');
+  const [ghTokens, setGhTokens] = useState<string[]>([]); // 已保存的令牌 label 列表（令牌本身在 Windows 凭据管理器）
+  const [ghShowSave, setGhShowSave] = useState(false); // 保存令牌面板开关
+  const [ghTokenOpen, setGhTokenOpen] = useState(false); // 已保存令牌下拉展开
+  const [ghAutoOpen, setGhAutoOpen] = useState(false); // 自动备份配置面板
+  const [ghAutoTokenLabel, setGhAutoTokenLabel] = useState(''); // 自动备份用的令牌 label
+  const [ghAutoRepo, setGhAutoRepo] = useState(''); // 自动备份用的仓库
+  const [ghSaveName, setGhSaveName] = useState(''); // 保存时的令牌名字
+  const [ghSaveToken, setGhSaveToken] = useState(''); // 保存时的令牌值
+  const [ghLastBackup, setGhLastBackup] = useState<{ repo: string; time: string } | null>(null);
   const [dataDir, setDataDir] = useState<string>('');
   const [capturing, setCapturing] = useState(false);
 
@@ -124,16 +131,30 @@ export function SettingsPanel() {
     }
   };
 
-  const refreshBackups = async () => {
-    setBackups(await listBackups());
-  };
-  const refreshBackupDir = async () => setBackupDir(await getBackupDir());
-  // 进入设置时刷新一次备份列表、备份路径、数据文件夹路径
+  // 进入设置时刷新一次数据文件夹路径
   useEffect(() => {
-    refreshBackups();
-    refreshBackupDir();
     setDataDir(useAppStore.getState().settings.dataDir || '');
   }, []);
+  // 进入设置时加载已保存的令牌 label / 仓库记忆 / 上次备份时间
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const raw = await invoke<string>('github_load_index');
+        const idx = JSON.parse(raw || '{}');
+        if (Array.isArray(idx.tokens)) setGhTokens(idx.tokens);
+        if (idx.lastBackup) setGhLastBackup(idx.lastBackup);
+      } catch { /* 忽略：首次无索引 */ }
+    })();
+  }, []);
+  // 持久化索引到本地（不含令牌本身）
+  const persistGhIndex = async () => {
+    const idx = JSON.stringify({ tokens: ghTokens, lastBackup: ghLastBackup });
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('github_save_index', { json: idx });
+    } catch { /* 忽略 */ }
+  };
   // 数据文件夹改动时同步显示
   useEffect(() => {
     setDataDir(settings.dataDir || '');
@@ -629,8 +650,8 @@ export function SettingsPanel() {
             </div>
             <p className="text-[11px] text-[var(--moon-faint)] mb-2">
               {isEn
-                ? 'All files (backups, wallpapers, icons, attachments) are stored here. Set it first to enable auto-backup and background upload.'
-                : '所有文件（自动备份、壁纸、图标、附件）都存放在此文件夹。请先设置，否则自动备份与背景导入将禁用。'}
+                ? 'All files (wallpapers, icons, attachments) are stored here. Set it first to enable background import.'
+                : '所有文件（壁纸、图标、附件）都存放在此文件夹。请先设置，否则背景导入将禁用。'}
             </p>
             <div
               className="rounded-xl px-3 py-2.5 text-[11px] font-mono truncate mb-2 border"
@@ -641,7 +662,7 @@ export function SettingsPanel() {
               }}
               title={dataDir || undefined}
             >
-              {dataDir || (isEn ? 'Not set — auto backup & background disabled' : '未设置 — 自动备份与背景导入已禁用')}
+              {dataDir || (isEn ? 'Not set — background import disabled' : '未设置 — 背景导入已禁用')}
             </div>
             <div className="flex gap-2">
               <button
@@ -665,7 +686,7 @@ export function SettingsPanel() {
                 <button
                   onClick={() => updateSettings({ dataDir: '' })}
                   className="text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.08)] text-[var(--moon-faint)] hover:bg-[rgba(210,210,220,0.16)] transition-all"
-                  title={isEn ? 'Clear (disable auto backup)' : '清除（将禁用自动备份）'}
+                  title={isEn ? 'Clear (disable background import)' : '清除（将禁用背景导入）'}
                 >
                   {isEn ? 'Clear' : '清除'}
                 </button>
@@ -706,123 +727,7 @@ export function SettingsPanel() {
             </div>
           </div>
 
-          {/* 自动备份 + 版本历史 */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Save size={15} style={{ color: 'var(--mint)' }} />
-              <h3 className="text-sm font-semibold text-[var(--moon)]">
-                {isEn ? 'Auto Backup & History' : '自动备份与版本历史'}
-              </h3>
-            </div>
-            <label className={`flex items-center gap-2 text-sm text-[var(--moon-dim)] cursor-pointer mb-3 ${!dataDir ? 'opacity-40' : ''}`}>
-              <input
-                type="checkbox"
-                checked={settings.autoBackupEnabled}
-                disabled={!dataDir}
-                onChange={(e) => updateSettings({ autoBackupEnabled: e.target.checked })}
-                className="accent-[var(--mint)]"
-              />
-              {isEn ? 'Enable automatic backup' : '开启自动备份'}
-            </label>
-            {!dataDir && (
-              <p className="text-[11px] text-[var(--danger, #ff6b6b)] mb-3">
-                {isEn ? 'Set the data folder first to enable auto backup.' : '请先设置数据文件夹以启用自动备份。'}
-              </p>
-            )}
-            {settings.autoBackupEnabled && dataDir && (
-              <>
-                <div className="flex items-center gap-3 mb-3">
-                  <span className="text-xs text-[var(--moon-faint)] whitespace-nowrap">{isEn ? 'Interval' : '备份间隔'}</span>
-                  <select
-                    value={settings.autoBackupIntervalMin}
-                    onChange={(e) => updateSettings({ autoBackupIntervalMin: Number(e.target.value) })}
-                    className="rune-input px-2 py-1.5 text-xs bg-transparent flex-1"
-                  >
-                    <option value={30} style={{ background: '#1A1A2E' }}>30 {isEn ? 'min' : '分钟'}</option>
-                    <option value={60} style={{ background: '#1A1A2E' }}>1 {isEn ? 'hour' : '小时'}</option>
-                    <option value={360} style={{ background: '#1A1A2E' }}>6 {isEn ? 'hours' : '小时'}</option>
-                    <option value={1440} style={{ background: '#1A1A2E' }}>24 {isEn ? 'hours' : '小时'}</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-3 mb-3">
-                  <span className="text-xs text-[var(--moon-faint)] whitespace-nowrap">{isEn ? 'Keep' : '保留份数'}</span>
-                  <select
-                    value={settings.autoBackupMax}
-                    onChange={(e) => updateSettings({ autoBackupMax: Number(e.target.value) })}
-                    className="rune-input px-2 py-1.5 text-xs bg-transparent flex-1"
-                  >
-                    <option value={1} style={{ background: '#1A1A2E' }}>1 {isEn ? 'copy' : '份'}</option>
-                    <option value={5} style={{ background: '#1A1A2E' }}>5 {isEn ? 'copies' : '份'}</option>
-                  </select>
-                </div>
-                {/* 备份位置：固定为 数据文件夹/backups，仅展示 + 打开 */}
-                <div className="mb-3">
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-xs text-[var(--moon-faint)]">{isEn ? 'Backup location' : '备份位置'}</span>
-                    <button
-                      onClick={() => backupDir && openFolder(backupDir)}
-                      className="text-[11px] px-2 py-1 rounded-lg bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all flex items-center gap-1"
-                      title={isEn ? 'Open backup folder' : '打开备份文件夹'}
-                    >
-                      <FolderOpen size={11} /> {isEn ? 'Open' : '打开'}
-                    </button>
-                  </div>
-                  <div className="text-[11px] text-[var(--moon-faint)] break-all rounded-lg bg-[rgba(192,200,216,0.05)] px-2.5 py-1.5">
-                    {backupDir || '—'}
-                  </div>
-                </div>
-              </>
-            )}
-            <div className="flex gap-2 mb-3">
-              <button
-                onClick={async () => {
-                  const ok = await createBackup();
-                  addToast(ok ? (isEn ? 'Backup created' : '已创建备份') : (isEn ? 'Backup failed' : '备份失败'), ok ? 'success' : 'error');
-                  refreshBackups();
-                }}
-                disabled={!dataDir}
-                className="flex-1 text-xs px-3 py-2 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Save size={13} /> {isEn ? 'Backup now' : '立即备份'}
-              </button>
-              <button
-                onClick={refreshBackups}
-                className="px-3 py-2 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all flex items-center justify-center"
-                title={isEn ? 'Refresh list' : '刷新列表'}
-              >
-                <RotateCcw size={13} />
-              </button>
-            </div>
-            {backups.length > 0 && (
-              <div className="flex items-center gap-2">
-                <select
-                  className="rune-input px-2 py-1.5 text-xs bg-transparent flex-1"
-                  defaultValue=""
-                  onChange={async (e) => {
-                    const path = e.target.value;
-                    if (!path) return;
-                    // 与"恢复备份"完全相同的流程：打开恢复弹窗，输入密码解密
-                    setRestoreFilePath(path);
-                    setBackupAction('import');
-                    setShowBackupModal(true);
-                    e.target.value = '';
-                  }}
-                >
-                  <option value="" style={{ background: '#1A1A2E' }}>{isEn ? 'Select a backup to restore…' : '选择要恢复的备份…'}</option>
-                  {backups.map((b) => (
-                    <option key={b.name} value={b.path} style={{ background: '#1A1A2E' }}>
-                      {b.time} · {b.size}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <p className="text-[11px] text-[var(--moon-faint)] mt-2">
-              {isEn
-                ? 'Backups are stored in the data folder by default, or a custom folder you choose. Restore reloads the app.'
-                : '备份默认保存在数据文件夹中，也可自选存放目录；恢复会重启应用以重新加载。'}
-            </p>
-          </div>
+
 
           {/* 自动锁定 */}
           <div>
@@ -958,6 +863,114 @@ export function SettingsPanel() {
               : '把本地加密的 .fvault 备份同步到你的 GitHub 私有仓库。主密码绝不会上传，只同步已加密的文件。'}
           </p>
 
+          {/* GitHub 自动备份 */}
+          <div className="mb-4 p-3 rounded-2xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.07)]">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-[var(--moon)]">{isEn ? 'Auto backup to GitHub' : 'GitHub 自动备份'}</span>
+              <button
+                onClick={() => {
+                  const cur = useAppStore.getState().settings.githubAutoBackup;
+                  useAppStore.getState().updateSettings({ githubAutoBackup: { ...cur, enabled: !cur.enabled } });
+                }}
+                className={`relative w-11 h-6 rounded-full transition-all ${useAppStore.getState().settings.githubAutoBackup.enabled ? 'bg-[var(--mint)]' : 'bg-[rgba(255,255,255,0.12)]'}`}
+                title={isEn ? 'Toggle auto backup' : '开关自动备份'}
+              >
+                <span className={`absolute top-0.5 ${useAppStore.getState().settings.githubAutoBackup.enabled ? 'left-[22px]' : 'left-0.5'} w-5 h-5 rounded-full bg-white transition-all`} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs text-[var(--moon-faint)]">{isEn ? 'Interval' : '备份间隔'}</span>
+              <select
+                value={useAppStore.getState().settings.githubAutoBackup.intervalMin}
+                onChange={(e) => {
+                  const cur = useAppStore.getState().settings.githubAutoBackup;
+                  useAppStore.getState().updateSettings({ githubAutoBackup: { ...cur, intervalMin: Number(e.target.value) } });
+                }}
+                className="rune-input flex-1 px-3 py-2 text-sm bg-transparent"
+              >
+                <option value={1} style={{ background: '#1A1A2E' }}>{isEn ? '1 minute (test)' : '1 分钟（测试）'}</option>
+                <option value={720} style={{ background: '#1A1A2E' }}>{isEn ? '12 hours' : '12 小时'}</option>
+                <option value={1440} style={{ background: '#1A1A2E' }}>{isEn ? '24 hours' : '24 小时'}</option>
+                <option value={2880} style={{ background: '#1A1A2E' }}>{isEn ? '48 hours' : '48 小时'}</option>
+                <option value={5760} style={{ background: '#1A1A2E' }}>{isEn ? '96 hours' : '96 小时'}</option>
+              </select>
+            </div>
+            <button
+              onClick={() => setGhAutoOpen((v) => !v)}
+              className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all mb-2"
+            >
+              {isEn ? 'Configure token & repo' : '配置令牌与仓库'}
+            </button>
+            {(() => {
+              const cfg = useAppStore.getState().settings.githubAutoBackup;
+              return cfg.repo
+                ? <div className="text-[11px] text-[var(--moon-dim)] mb-1">{isEn ? `Target repo: ${cfg.repo}` : `目标仓库：${cfg.repo}`}</div>
+                : <div className="text-[11px] text-[var(--moon-faint)] mb-1">{isEn ? 'Not configured yet' : '尚未配置仓库'}</div>;
+            })()}
+            {ghAutoOpen && (
+              <div className="mt-2 p-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] space-y-2">
+                {/* 选已保存令牌 */}
+                <div>
+                  <label className="text-[11px] text-[var(--moon-faint)] mb-1 block">{isEn ? 'Token (pick a saved one)' : '令牌（选一个已保存的）'}</label>
+                  {ghTokens.length === 0 ? (
+                    <div className="text-[11px] text-[var(--moon-faint)]">{isEn ? 'Save a token first via "+ Save token" above' : '请先点上方「+ 保存令牌」保存一个令牌'}</div>
+                  ) : (
+                    <select
+                      value={ghAutoTokenLabel}
+                      onChange={(e) => setGhAutoTokenLabel(e.target.value)}
+                      className="rune-input w-full px-3 py-2 text-sm bg-transparent"
+                    >
+                      <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— select token —' : '— 选择令牌 —'}</option>
+                      {ghTokens.map((t) => <option key={t} value={t} style={{ background: '#1A1A2E' }}>{t}</option>)}
+                    </select>
+                  )}
+                </div>
+                {/* 获取仓库 */}
+                <button
+                  onClick={async () => {
+                    if (!ghAutoTokenLabel) { addToast(isEn ? 'Pick a token first' : '请先选令牌', 'warning'); return; }
+                    try {
+                      const { invoke } = await import('@tauri-apps/api/core');
+                      const tok = await invoke<string>('github_cred_get', { label: ghAutoTokenLabel });
+                      const repos = await invoke<{ full_name: string }[]>('github_list_repos', { token: tok });
+                      setGhRepos(repos);
+                      addToast(isEn ? `Found ${repos.length} repos` : `找到 ${repos.length} 个仓库`, 'success');
+                    } catch (e: any) { addToast(isEn ? `Failed: ${String(e)}` : `失败：${String(e)}`, 'error'); }
+                  }}
+                  className="w-full text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.1)] text-[var(--moon-dim)] hover:bg-[rgba(210,210,220,0.18)] transition-all"
+                >
+                  {isEn ? 'List my repositories' : '获取我的仓库'}
+                </button>
+                {ghRepos.length > 0 && (
+                  <select
+                    value={ghAutoRepo}
+                    onChange={(e) => setGhAutoRepo(e.target.value)}
+                    className="rune-input w-full px-3 py-2 text-sm bg-transparent"
+                  >
+                    <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— choose repo —' : '— 请选择仓库 —'}</option>
+                    {ghRepos.map((r) => <option key={r.full_name} value={r.full_name} style={{ background: '#1A1A2E' }}>{r.full_name}</option>)}
+                  </select>
+                )}
+                {ghAutoRepo && (
+                  <div className="text-[11px] text-[var(--mint)]">{isEn ? `Selected: ${ghAutoRepo}` : `已选仓库：${ghAutoRepo}`}</div>
+                )}
+                <button
+                  onClick={() => {
+                    if (!ghAutoTokenLabel || !ghAutoRepo) { addToast(isEn ? 'Pick token and repo' : '请选令牌和仓库', 'warning'); return; }
+                    const cur = useAppStore.getState().settings.githubAutoBackup;
+                    useAppStore.getState().updateSettings({ githubAutoBackup: { ...cur, tokenLabel: ghAutoTokenLabel, repo: ghAutoRepo } });
+                    setGhAutoOpen(false);
+                    addToast(isEn ? 'Auto backup configured' : '已配置自动备份', 'success');
+                  }}
+                  className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.15)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.25)] transition-all"
+                >
+                  {isEn ? 'Save config' : '保存配置'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* 已保存令牌：仅在下拉里显示，点开才列出（每条带 × 删除） */}
           <label className="text-xs text-[var(--moon-faint)] mb-1.5 block">{isEn ? 'GitHub Token (PAT)' : 'GitHub 令牌（PAT）'}</label>
           <input
             type="password"
@@ -966,13 +979,118 @@ export function SettingsPanel() {
             placeholder={isEn ? 'ghp_xxx or github_pat_xxx' : 'ghp_xxx 或 github_pat_xxx'}
             className="rune-input w-full px-3 py-2.5 text-sm bg-transparent mb-2"
           />
+          {ghTokens.length > 0 && (
+            <div className="relative mb-2">
+              <button
+                onClick={() => setGhTokenOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-xs text-[var(--moon-dim)] hover:border-[rgba(255,255,255,0.15)] transition-all"
+              >
+                <span>{isEn ? 'Saved tokens' : '已保存的令牌'}</span>
+                <span className="text-[var(--moon-faint)]">{ghTokenOpen ? '▲' : '▼'}</span>
+              </button>
+              {ghTokenOpen && (
+                <div className="absolute z-20 left-0 right-0 mt-1 p-1.5 rounded-xl bg-[#16162a] border border-[rgba(255,255,255,0.1)] shadow-xl space-y-1 max-h-52 overflow-auto">
+                  {ghTokens.map((t) => (
+                    <div
+                      key={t}
+                      className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
+                    >
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { invoke } = await import('@tauri-apps/api/core');
+                            const tok = await invoke<string>('github_cred_get', { label: t });
+                            setGhToken(tok);
+                            setGhTokenOpen(false);
+                            addToast(isEn ? `Loaded token "${t}"` : `已载入令牌「${t}」`, 'success');
+                          } catch (err: any) {
+                            addToast(isEn ? `Load failed: ${String(err)}` : `载入失败：${String(err)}`, 'error');
+                          }
+                        }}
+                        className="flex-1 text-left text-sm text-[var(--moon-dim)] truncate hover:text-[var(--moon)]"
+                        title={t}
+                      >
+                        {t}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { invoke } = await import('@tauri-apps/api/core');
+                            await invoke('github_cred_delete', { label: t });
+                            setGhTokens((prev) => prev.filter((x) => x !== t));
+                            await persistGhIndex();
+                            addToast(isEn ? `Deleted token "${t}"` : `已删除令牌「${t}」`, 'info');
+                          } catch (err: any) {
+                            addToast(isEn ? `Delete failed: ${String(err)}` : `删除失败：${String(err)}`, 'error');
+                          }
+                        }}
+                        className="shrink-0 w-6 h-6 flex items-center justify-center rounded-lg text-[var(--moon-faint)] hover:text-[var(--danger)] hover:bg-[rgba(255,90,90,0.12)] transition-all"
+                        title={isEn ? 'Delete this token' : '删除该令牌'}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 保存令牌：点开一个小面板，输入名字+令牌后保存 */}
+          <div className="mb-3">
+            <button
+              onClick={() => { setGhShowSave((v) => !v); setGhSaveName(''); setGhSaveToken(''); }}
+              className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all"
+            >
+              {isEn ? '+ Save token' : '+ 保存令牌'}
+            </button>
+            {ghShowSave && (
+              <div className="mt-2 p-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] space-y-2">
+                <input
+                  type="text"
+                  value={ghSaveName}
+                  onChange={(e) => setGhSaveName(e.target.value)}
+                  placeholder={isEn ? 'Token name (e.g. my-pat)' : '令牌名字（如 我的令牌）'}
+                  className="rune-input w-full px-3 py-2 text-sm bg-transparent"
+                />
+                <input
+                  type="password"
+                  value={ghSaveToken}
+                  onChange={(e) => setGhSaveToken(e.target.value)}
+                  placeholder={isEn ? 'Paste token here' : '把令牌粘贴到这里'}
+                  className="rune-input w-full px-3 py-2 text-sm bg-transparent"
+                />
+                <button
+                  onClick={async () => {
+                    if (!ghSaveToken.trim()) { addToast(isEn ? 'Enter a token' : '请填写令牌', 'warning'); return; }
+                    const label = ghSaveName.trim() || 'github-token';
+                    try {
+                      const { invoke } = await import('@tauri-apps/api/core');
+                      await invoke('github_cred_save', { label, token: ghSaveToken.trim() });
+                      setGhTokens((prev) => (prev.includes(label) ? prev : [...prev, label]));
+                      await persistGhIndex();
+                      setGhToken(ghSaveToken.trim());
+                      setGhSaveName(''); setGhSaveToken(''); setGhShowSave(false);
+                      addToast(isEn ? `Saved token "${label}"` : `已保存令牌「${label}」（存于系统凭据管理器）`, 'success');
+                    } catch (err: any) {
+                      addToast(isEn ? `Save failed: ${String(err)}` : `保存失败：${String(err)}`, 'error');
+                    }
+                  }}
+                  className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.15)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.25)] transition-all"
+                >
+                  {isEn ? 'Save' : '保存'}
+                </button>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={async () => {
               if (!ghToken.trim()) { addToast(isEn ? 'Enter a token first' : '请先填写令牌', 'warning'); return; }
               setGhBusy(true);
               try {
                 const { invoke } = await import('@tauri-apps/api/core');
-                const repos = await invoke<string[]>('github_list_repos', { token: ghToken.trim() });
+                const repos = await invoke<{ full_name: string }[]>('github_list_repos', { token: ghToken.trim() });
                 setGhRepos(repos);
                 addToast(isEn ? `Found ${repos.length} repos` : `找到 ${repos.length} 个仓库`, 'success');
               } catch (e: any) {
@@ -994,8 +1112,17 @@ export function SettingsPanel() {
                 className="rune-input w-full px-3 py-2.5 text-sm bg-transparent"
               >
                 <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— choose —' : '— 请选择 —'}</option>
-                {ghRepos.map((r) => <option key={r} value={r} style={{ background: '#1A1A2E' }}>{r}</option>)}
+                {ghRepos.map((r) => <option key={r.full_name} value={r.full_name} style={{ background: '#1A1A2E' }}>{r.full_name}</option>)}
               </select>
+            </div>
+          )}
+
+          {/* 上次备份时间 */}
+          {ghLastBackup && (
+            <div className="mb-3 text-[11px] text-[var(--moon-faint)]">
+              {isEn
+                ? `Last backup: ${ghLastBackup.repo} @ ${ghLastBackup.time}`
+                : `上次备份：${ghLastBackup.repo} · ${ghLastBackup.time}`}
             </div>
           )}
 
@@ -1006,27 +1133,48 @@ export function SettingsPanel() {
                 if (!dataDir) { addToast(isEn ? 'Set data folder first' : '请先设置数据文件夹', 'warning'); return; }
                 setGhBusy(true);
                 try {
+                  // 先直接基于当前保险库生成一份加密备份（不依赖本地已有文件）
+                  const { createBackup } = await import('@/lib/backupManager');
+                  const made = await createBackup();
+                  if (!made) { addToast(isEn ? 'Failed to build backup (unlocked?)' : '生成备份失败（请确认已解锁）', 'warning'); setGhBusy(false); return; }
                   const { invoke } = await import('@tauri-apps/api/core');
                   const msg = await invoke<string>('github_upload_backup', { token: ghToken.trim(), repo: ghRepo, dataDir });
+                  setGhLastBackup({ repo: ghRepo, time: new Date().toLocaleString() });
+                  await persistGhIndex();
                   addToast(msg, 'success');
                 } catch (e: any) {
-                  addToast(isEn ? `Upload failed: ${String(e)}` : `上传失败：${String(e)}`, 'error');
+                  addToast(isEn ? `Backup failed: ${String(e)}` : `备份失败：${String(e)}`, 'error');
                 } finally { setGhBusy(false); }
               }}
               disabled={ghBusy}
               className="flex-1 text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
             >
-              <Save size={13} /> {isEn ? 'Upload' : '上传备份'}
+              <Save size={13} /> {isEn ? 'Backup to repo' : '备份文件'}
             </button>
             <button
               onClick={async () => {
                 if (!ghToken.trim() || !ghRepo) { addToast(isEn ? 'Token and repo required' : '请先填令牌并选仓库', 'warning'); return; }
-                if (!dataDir) { addToast(isEn ? 'Set data folder first' : '请先设置数据文件夹', 'warning'); return; }
                 setGhBusy(true);
                 try {
                   const { invoke } = await import('@tauri-apps/api/core');
-                  const msg = await invoke<string>('github_download_backup', { token: ghToken.trim(), repo: ghRepo, dataDir });
-                  addToast(msg + (isEn ? ' — restore via Backup menu' : ' — 去「加密备份」里恢复'), 'success');
+                  const { open } = await import('@tauri-apps/plugin-dialog');
+                  const res = await invoke<{ files: { filename: string; content: string }[] }>('github_download_backup', { token: ghToken.trim(), repo: ghRepo });
+                  if (!res.files || res.files.length === 0) { addToast(isEn ? 'No backups found' : '仓库里没有备份', 'warning'); setGhBusy(false); return; }
+                  // 让用户选一个文件夹，把所有备份写进去
+                  const dir = await open({ directory: true, title: isEn ? 'Select folder to save all backups' : '选择保存所有备份的文件夹' });
+                  if (!dir || typeof dir !== 'string') { addToast(isEn ? 'Cancelled' : '已取消保存', 'info'); setGhBusy(false); return; }
+                  const { writeFile, mkdir } = await import('@tauri-apps/plugin-fs');
+                  const { join } = await import('@tauri-apps/api/path');
+                  await mkdir(dir, { recursive: true });
+                  let ok = 0;
+                  for (const f of res.files) {
+                    // Windows 文件名不允许冒号，落地时把 : 换成 -
+                    const safeName = f.filename.replace(/:/g, '-');
+                    const bin = Uint8Array.from(atob(f.content), (c) => c.charCodeAt(0));
+                    await writeFile(await join(dir, safeName), bin);
+                    ok++;
+                  }
+                  addToast((isEn ? `Saved ${ok} backups to ` : `已保存 ${ok} 个备份到 `) + dir, 'success');
                 } catch (e: any) {
                   addToast(isEn ? `Download failed: ${String(e)}` : `下载失败：${String(e)}`, 'error');
                 } finally { setGhBusy(false); }
@@ -1058,16 +1206,41 @@ export function SettingsPanel() {
                 <X size={18} />
               </button>
             </div>
-            <ol className="space-y-3 text-[13px] text-[var(--moon-dim)] leading-relaxed list-decimal pl-5">
-              <li>{isEn ? 'Go to GitHub → avatar → Settings → Developer settings → Personal access tokens → generate a token (classic).' : 'GitHub 右上角头像 → Settings → Developer settings → Personal access tokens → 生成一个 token（classic）。'}</li>
-              <li>{isEn ? 'Check the "repo" scope (full repo read/write), then Generate and copy the token (starts with ghp_ or github_pat_).' : '勾选 repo 权限（读写仓库），生成后复制令牌（ghp_ 或 github_pat_ 开头）。'}</li>
-              <li>{isEn ? 'Paste the token above, click "List my repositories", then pick a PRIVATE repo from the dropdown.' : '把令牌粘贴到上方，点「获取我的仓库」，在下拉里选一个私有仓库。'}</li>
-              <li>{isEn ? 'Click "Upload" to push your encrypted .fvault; "Download" pulls it back (then restore via the Backup menu).' : '点「上传备份」把加密的 .fvault 推上去；「下载备份」拉回来（再去「加密备份」里恢复）。'}</li>
-            </ol>
+            <div className="space-y-4 text-[13px] text-[var(--moon-dim)] leading-relaxed">
+              <section>
+                <h3 className="text-sm font-semibold text-[var(--moon)] mb-2">{isEn ? 'Step 1 · Create a private repo' : '第一步 · 新建私有仓库'}</h3>
+                <ol className="space-y-1.5 list-decimal pl-5">
+                  <li>{isEn ? 'Open github.com and log in to your account.' : '打开 github.com 登录你的账号。'}</li>
+                  <li>{isEn ? 'Click the "＋" at top-right → "New repository".' : '点右上角「＋」→「New repository（新建仓库）」。'}</li>
+                  <li>{isEn ? 'Repository name: e.g. fallvault-backup (any name).' : '仓库名：例如 fallvault-backup（随便起）。'}</li>
+                  <li>{isEn ? 'Visibility: choose **Private** (so only you can see the backup).' : '可见性：选 **Private（私有）**，只有你能看到备份。'}</li>
+                  <li>{isEn ? 'Leave everything else default → click "Create repository".' : '其他都不用动 → 点「Create repository（创建仓库）」。'}</li>
+                </ol>
+              </section>
+              <section>
+                <h3 className="text-sm font-semibold text-[var(--moon)] mb-2">{isEn ? 'Step 2 · Create a Personal Access Token (PAT)' : '第二步 · 获取个人访问令牌（PAT）'}</h3>
+                <ol className="space-y-1.5 list-decimal pl-5">
+                  <li>{isEn ? 'Click avatar (top-right) → Settings → Developer settings → Personal access tokens → "Fine-grained tokens" → "Generate new token".' : '点头像（右上角）→ Settings → Developer settings → Personal access tokens →「Fine-grained tokens」→「Generate new token」。'}</li>
+                  <li>{isEn ? 'Token name: any (e.g. fallvault). Expiration: pick a date.' : 'Token name：随便填（如 fallvault）。Expiration：选个到期日。'}</li>
+                  <li>{isEn ? 'Resource owner: select your account.' : 'Resource owner：选你自己的账号。'}</li>
+                  <li>{isEn ? 'Repository access: "Only select repositories" → choose the backup repo you just created.' : 'Repository access：选「Only select repositories」→ 勾上刚才建的备份仓库。'}</li>
+                  <li>{isEn ? 'Permissions → Repository permissions → Contents → set to "Read and write" (upload needs write).' : 'Permissions → Repository permissions → 找到 Contents → 设为「Read and write（读写）」（上传需要写权限）。'}</li>
+                  <li>{isEn ? 'Click "Generate token", then copy the github_pat_xxx string immediately (shown only once!).' : '点「Generate token」，立刻复制那串 github_pat_xxx（只显示这一次！）。'}</li>
+                </ol>
+              </section>
+              <section>
+                <h3 className="text-sm font-semibold text-[var(--moon)] mb-2">{isEn ? 'Step 3 · Use in FallVault' : '第三步 · 在 FallVault 里用'}</h3>
+                <ol className="space-y-1.5 list-decimal pl-5">
+                  <li>{isEn ? 'Click "+ Save token", enter a name + paste the token, then "Save" (stored in Windows Credential Manager, not uploaded). Pick a saved token from the dropdown above to autofill.' : '点「+ 保存令牌」，输入名字并把令牌粘贴进去，再点「保存」（存在 Windows 凭据管理器，不会上传）。上方下拉选已保存令牌可自动填充。'}</li>
+                  <li>{isEn ? 'Click "List my repositories", then pick your private repo from the dropdown.' : '点「获取我的仓库」，在下拉里选你的私有仓库。'}</li>
+                  <li>{isEn ? 'Click "Backup to repo" to create an encrypted .fvault from your current vault and push it (timestamped filename). "Download" pulls the latest one back.' : '点「备份文件」会基于当前保险库直接生成加密 .fvault 并上传（文件名带时间）；「下载备份」拉回最新一份。'}</li>
+                </ol>
+              </section>
+            </div>
             <div className="mt-4 p-3 rounded-xl text-[11px] leading-relaxed" style={{ background: 'rgba(212,112,112,0.1)', color: '#D47070' }}>
               {isEn
-                ? 'Your token stays only in this app\'s memory and is never uploaded. The master password is also NEVER uploaded — only the already-encrypted .fvault file syncs.'
-                : '令牌只存在本软件内存里，绝不上传；主密码也绝不上传，同步的只是已经加密好的 .fvault 文件。'}
+                ? 'Your token is stored only in the Windows Credential Manager on this PC and is NEVER uploaded. The master password is also NEVER uploaded — only the already-encrypted .fvault file syncs.'
+                : '令牌只存在本机的 Windows 凭据管理器里，绝不上传；主密码也绝不上传，同步的只是已经加密好的 .fvault 文件。'}
             </div>
           </div>
         </div>
@@ -1184,8 +1357,8 @@ export function SettingsPanel() {
               {backupAction === 'import' && (
                 <div className="text-[11px] rounded-lg px-2.5 py-2 bg-[rgba(125,211,192,0.08)] text-[var(--mint)] leading-relaxed">
                   {isEn
-                    ? 'Tip: auto backups are encrypted with your master (lock) password. Enter that password to restore.'
-                    : '提示：自动备份是用你的主密码（即软件锁定密码）加密的，请输入该密码来恢复。'}
+                    ? 'Tip: .fvault backups are encrypted with your master (lock) password. Enter that password to restore.'
+                    : '提示：.fvault 备份是用你的主密码（即软件锁定密码）加密的，请输入该密码来恢复。'}
                 </div>
               )}
               <input

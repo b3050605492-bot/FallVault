@@ -138,3 +138,32 @@ export function startAutoBackup(intervalMin: number, onTick?: (ok: boolean) => v
 export function stopAutoBackup() {
   if (timer) { clearInterval(timer); timer = null; }
 }
+
+// GitHub 自动备份调度器
+let ghTimer: ReturnType<typeof setInterval> | null = null;
+export function startGithubAutoBackup(intervalMin: number, onTick?: (ok: boolean) => void): () => void {
+  stopGithubAutoBackup();
+  const ms = Math.max(1, intervalMin) * 60 * 1000;
+  ghTimer = setInterval(async () => {
+    try {
+      const cfg = useAppStore.getState().settings.githubAutoBackup;
+      if (!cfg.enabled || !cfg.repo || !cfg.tokenLabel) return;
+      const mp = getMasterPassword();
+      if (!mp) return; // 已锁定，跳过
+      if (!isDataDirSet()) return; // 未设置数据文件夹，跳过
+      // 1) 生成本地加密备份
+      const made = await createBackup();
+      if (!made) { onTick?.(false); return; }
+      // 2) 取令牌（Windows 凭据管理器）并上传
+      const { invoke: inv } = await import('@tauri-apps/api/core');
+      const token = await inv<string>('github_cred_get', { label: cfg.tokenLabel });
+      const dataDir = await getDataDir();
+      await inv<string>('github_upload_backup', { token, repo: cfg.repo, dataDir });
+      onTick?.(true);
+    } catch { onTick?.(false); }
+  }, ms);
+  return stopGithubAutoBackup;
+}
+export function stopGithubAutoBackup() {
+  if (ghTimer) { clearInterval(ghTimer); ghTimer = null; }
+}

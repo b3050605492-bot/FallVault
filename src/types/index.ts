@@ -76,6 +76,12 @@ export interface AppSettings {
   autoBackupEnabled: boolean;
   autoBackupMax: number;
   autoBackupIntervalMin: number;
+  githubAutoBackup: {
+    enabled: boolean;
+    intervalMin: number; // 备份间隔（分钟）：1/720/1440/2880/5760
+    repo: string; // 选中的仓库 full_name
+    tokenLabel: string; // 已保存令牌的 label（令牌本体在 Windows 凭据管理器）
+  };
   dataDir: string; // 用户自定义数据文件夹（备份/壁纸/图标/附件统一存放）；为空则未设置（禁用自动备份与背景导入）
   customBackgrounds: { id: string; type: 'image' | 'video'; source: string; name: string }[]; // 用户上传的自定义背景清单
   autofillHotkey: string; // 半自动填充热键（如 'Ins'），默认 'Ins'

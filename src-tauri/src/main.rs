@@ -249,6 +249,11 @@ fn main() {
             github_list_repos,
             github_upload_backup,
             github_download_backup,
+            github_cred_save,
+            github_cred_get,
+            github_cred_delete,
+            github_save_index,
+            github_load_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

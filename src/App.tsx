@@ -20,7 +20,7 @@ import { useAppStore } from '@/stores/appStore';
 import { THEMES, applyTheme } from '@/types';
 import { lockVault } from '@/lib/crypto';
 import { useAutoLock } from '@/hooks/useAutoLock';
-import { startAutoBackup, stopAutoBackup } from '@/lib/backupManager';
+import { stopAutoBackup, startGithubAutoBackup, stopGithubAutoBackup } from '@/lib/backupManager';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -95,18 +95,16 @@ function App() {
   };
   useAutoLock(settings.autoLockEnabled, settings.autoLockMinutes, !locked, handleAutoLock);
 
-  // 解锁后启动自动备份调度，锁定时停止（避免未解锁时备份空库）
+  // GitHub 自动备份调度器：放在 App 层（始终存活），不受设置面板开关影响
   useEffect(() => {
-    if (!locked) {
-      const s = useAppStore.getState().settings;
-      if (s.autoBackupEnabled && s.dataDir?.trim()) {
-        startAutoBackup(s.autoBackupIntervalMin);
-      }
-    } else {
-      stopAutoBackup();
+    const cfg = settings.githubAutoBackup;
+    if (cfg.enabled && cfg.repo && cfg.tokenLabel) {
+      const stop = startGithubAutoBackup(cfg.intervalMin);
+      return () => stop();
     }
-    return () => stopAutoBackup();
-  }, [locked]);
+    stopGithubAutoBackup();
+    return undefined;
+  }, [settings.githubAutoBackup.enabled, settings.githubAutoBackup.intervalMin, settings.githubAutoBackup.repo, settings.githubAutoBackup.tokenLabel]);
   useEffect(() => {
     const unlistenFn = getCurrentWindow().onResized(async () => {
       // 仅当窗口被最小化时锁定

@@ -81,6 +81,12 @@ const defaultSettings: AppSettings = {
   autoBackupEnabled: true,
   autoBackupMax: 5,
   autoBackupIntervalMin: 60,
+  githubAutoBackup: {
+    enabled: false,
+    intervalMin: 720, // 默认 12 小时
+    repo: '',
+    tokenLabel: '',
+  },
   dataDir: '',
   customBackgrounds: [],
   autofillHotkey: 'Ins',
