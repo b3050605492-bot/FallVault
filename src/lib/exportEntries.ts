@@ -236,7 +236,7 @@ export async function exportToJson(entries: Entry[], folders: Folder[], tags: Ta
   const { appDataDir } = await import('@tauri-apps/api/path');
   const data = {
     app: 'FallVault',
-    version: '1.1.1',
+    version: '1.1.2',
     exportedAt: formatTime(new Date().toISOString()),
     count: rows.length,
     entries: rows.map((r) => ({

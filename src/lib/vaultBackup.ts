@@ -169,7 +169,7 @@ export async function buildBackupContent(
 
   const data: BackupData = {
     app: 'FallVault',
-    version: '1.1.1',
+    version: '1.1.2',
     exportedAt: new Date().toISOString(),
     folders: folderRows.map((f) => ({ id: f.id, name: f.name, icon: f.icon || '', parent_id: f.parent_id ?? null })),
     tags: tagRows.map((t) => ({ id: t.id, name: t.name, color: t.color || '#7DD3C0' })),
