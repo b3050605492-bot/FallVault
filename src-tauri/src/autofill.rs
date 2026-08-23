@@ -2,7 +2,7 @@
 // 账号先粘贴，Tab 跳到密码框，再粘贴密码，最后清空剪贴板（避免密码残留）
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -14,17 +14,22 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
+// 待填目标闲置上限：超过该时长未使用/未刷新，自动解除武装，避免"很久之后误触发"
+const IDLE_LIMIT: Duration = Duration::from_secs(300);
+
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct FillTarget {
     pub username: String,
     pub password: String,
 }
 
-// 全局状态：待填数据 + 当前热键（字符串，如 "Ins"）
+// 全局状态：待填数据 + 当前热键（字符串，如 "Ins"）+ 填充后是否重置 + 最后活跃时刻
 pub struct AutofillState {
     pub target: Mutex<Option<FillTarget>>,
     pub hotkey: Mutex<String>,
     pub busy: Mutex<bool>,
+    pub reset_after_use: Mutex<bool>,
+    pub last_active: Mutex<Instant>,
 }
 
 impl AutofillState {
@@ -33,6 +38,8 @@ impl AutofillState {
             target: Mutex::new(None),
             hotkey: Mutex::new("Ins".to_string()),
             busy: Mutex::new(false),
+            reset_after_use: Mutex::new(false),
+            last_active: Mutex::new(Instant::now()),
         }
     }
 }
@@ -208,14 +215,15 @@ unsafe fn send_paste() {
 }
 
 // 执行填充流程：账号 → Tab 跳到密码框 → 密码（密码后不自动回车，避免直接提交登录）
-fn do_fill(app: &AppHandle, target: &FillTarget) {
+// 返回 true 表示已执行填充；填充后若 reset_after_use 则清除待填目标
+fn do_fill(app: &AppHandle, target: &FillTarget, reset_after_use: bool) -> bool {
     if target.username.is_empty() && target.password.is_empty() {
-        return;
+        return false;
     }
     unsafe {
         // 先确认前台不是我们自己
         if foreground_is_ours() {
-            return;
+            return false;
         }
         // 账号
         if !target.username.is_empty() {
@@ -237,6 +245,11 @@ fn do_fill(app: &AppHandle, target: &FillTarget) {
         // 清空剪贴板，避免密码残留
         let _ = app.clipboard().write_text(String::new());
     }
+    // 填充后是否重置（清除待填目标）
+    if reset_after_use {
+        // 由调用方负责清 target
+    }
+    true
 }
 
 // 启动全局热键监听线程
@@ -258,12 +271,31 @@ pub fn start_autofill(app: AppHandle, state: Arc<AutofillState>) {
                         }
                         *busy = true;
                     }
+                    let now = Instant::now();
+                    let idle = {
+                        let la = state.last_active.lock().unwrap();
+                        now.saturating_duration_since(*la)
+                    };
+                    let reset_after_use = *state.reset_after_use.lock().unwrap();
                     let target = {
                         let t = state.target.lock().unwrap();
                         t.clone()
                     };
+                    // 闲置过久 → 视为过期，解除武装并跳过（避免"很久之后误触发"）
+                    if idle > IDLE_LIMIT {
+                        *state.target.lock().unwrap() = None;
+                        let mut busy = state.busy.lock().unwrap();
+                        *busy = false;
+                        return;
+                    }
                     if let Some(t) = target {
-                        do_fill(&app, &t);
+                        let filled = do_fill(&app, &t, reset_after_use);
+                        // 刷新活跃时刻
+                        *state.last_active.lock().unwrap() = Instant::now();
+                        // 若开启"填充后重置"，清除待填目标（下次需重新选择账号）
+                        if filled && reset_after_use {
+                            *state.target.lock().unwrap() = None;
+                        }
                     }
                     {
                         let mut busy = state.busy.lock().unwrap();

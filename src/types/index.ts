@@ -70,13 +70,15 @@ export interface AppSettings {
     opacity: number;
     darkOverlay: number;
   };
-  autoLockEnabled: boolean;
-  autoLockMinutes: number;
   clipboardClearSeconds: number;
   autoBackupEnabled: boolean;
   autoBackupMax: number;
   autoBackupIntervalMin: number;
+  // 解锁宽限（免验证时长）：开启后，解锁成功的若干分钟内重新打开/从托盘唤起不要求重输主密码
+  unlockGraceEnabled: boolean;
+  unlockGraceMin: number; // 免验证时长（分钟）：5/15/30/60
   totpOffsetSec: number; // TOTP 时间偏移校正（秒），补偿本机与验证器设备的时间差
+  autofillResetAfterUse: boolean; // 半自动填充：填充一次后是否重置待填账号（true=需重新选择，false=可连续填充）
   githubAutoBackup: {
     enabled: boolean;
     intervalMin: number; // 备份间隔（分钟）：1/720/1440/2880/5760

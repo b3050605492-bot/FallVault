@@ -753,35 +753,44 @@ export function SettingsPanel() {
                 {isEn ? 'Click then press any key (Esc to cancel)' : '点击后按一下任意按键即可（Esc 取消）'}
               </span>
             </div>
+            <label className="flex items-center gap-2 text-sm text-[var(--moon-dim)] cursor-pointer mt-3">
+              <input
+                type="checkbox"
+                checked={!!settings.autofillResetAfterUse}
+                onChange={(e) => updateSettings({ autofillResetAfterUse: e.target.checked })}
+                className="accent-[var(--mint)] w-4 h-4"
+              />
+              {isEn ? 'Reset fill target after each fill (re-select account next time)' : '每次填充后重置账号（开启后填一次即清除，下次需重新选择）'}
+            </label>
           </div>
 
 
 
-          {/* 自动锁定 */}
+          {/* 解锁宽限（免验证时长） */}
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Timer size={15} style={{ color: 'var(--mint)' }} />
               <h3 className="text-sm font-semibold text-[var(--moon)]">
-                {isEn ? 'Auto Lock' : '自动锁定'}
+                {isEn ? 'Unlock Grace (Password-free Duration)' : '免验证时长'}
               </h3>
             </div>
             <label className="flex items-center gap-2 text-sm text-[var(--moon-dim)] cursor-pointer mb-3">
               <input
                 type="checkbox"
-                checked={settings.autoLockEnabled}
-                onChange={(e) => updateSettings({ autoLockEnabled: e.target.checked })}
-                className="accent-[var(--mint)]"
+                checked={settings.unlockGraceEnabled}
+                onChange={(e) => updateSettings({ unlockGraceEnabled: e.target.checked })}
+                className="accent-[var(--mint)] w-4 h-4"
               />
-              {isEn ? 'Lock after inactivity' : '闲置一段时间后自动锁定'}
+              {isEn ? 'Keep unlocked for a while after sign-in (no re-enter within duration)' : '登录后一段时间内免验证（时长内重新打开/托盘唤起不要求输密码）'}
             </label>
-            {settings.autoLockEnabled && (
+            {settings.unlockGraceEnabled && (
               <div className="flex gap-1.5 flex-wrap">
-                {[5, 10, 15, 30].map((m) => (
+                {[1, 5, 15, 30, 60].map((m) => (
                   <button
                     key={m}
-                    onClick={() => updateSettings({ autoLockMinutes: m })}
+                    onClick={() => updateSettings({ unlockGraceMin: m })}
                     className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
-                      settings.autoLockMinutes === m
+                      settings.unlockGraceMin === m
                         ? 'border-[var(--mint)] text-[var(--mint)] bg-[rgba(125,211,192,0.1)]'
                         : 'border-[rgba(192,200,216,0.15)] text-[var(--moon-dim)] hover:border-[rgba(192,200,216,0.3)]'
                     }`}
@@ -793,8 +802,8 @@ export function SettingsPanel() {
             )}
             <p className="text-[11px] text-[var(--moon-faint)] mt-2">
               {isEn
-                ? 'Locking instantly when minimized is always on'
-                : '最小化窗口时会立即锁定（始终生效）'}
+                ? 'Manual "Lock" always clears the session immediately. After the duration expires, password is required again. Closing the app always requires re-entry.'
+                : '手动「锁定」始终立即失效；超期后需重输；完全关闭软件下次必重输。'}
             </p>
           </div>
 

@@ -129,6 +129,41 @@ export function getMasterKey(): CryptoKey | null {
   return masterKey;
 }
 
+// 解锁宽限（免验证时长）：开启后，解锁成功的若干分钟内重新打开/从托盘唤起不要求重输
+let graceEnabled = false;
+let graceMinutes = 15;
+let unlockExpireAt: number | null = null; // 免验证有效期截止时间戳(ms)
+
+export function setUnlockGraceConfig(enabled: boolean, minutes: number): void {
+  graceEnabled = enabled;
+  graceMinutes = minutes > 0 ? minutes : 15;
+  if (!enabled) {
+    // 关闭宽限 → 立即作废
+    unlockExpireAt = null;
+  } else if (masterKey !== null) {
+    // 已解锁状态下开启/调整宽限 → 立即以当前时刻重新开始计时
+    unlockExpireAt = Date.now() + graceMinutes * 60_000;
+  }
+  // 注意：若当前处于锁定态（masterKey 为 null），不设置 expire，
+  // 等下次 unlockVault 成功时再按 graceEnabled 计算（避免未输密码却直接进入）
+}
+
+// 当前是否处于免验证有效期内
+export function isUnlockGraceValid(): boolean {
+  if (!graceEnabled || unlockExpireAt === null) return false;
+  return Date.now() < unlockExpireAt;
+}
+
+// 是否存在一个"已开启宽限的解锁会话"（用于区分：宽限未开启 vs 宽限已过期）
+export function hasGraceSession(): boolean {
+  return unlockExpireAt !== null;
+}
+
+// 手动锁定 / 超时后调用：清除宽限
+export function clearUnlockGrace(): void {
+  unlockExpireAt = null;
+}
+
 export function getMasterPassword(): string | null {
   return masterPassword;
 }
@@ -170,6 +205,8 @@ export async function unlockVault(password: string): Promise<boolean> {
     if (decrypted === VERIFY_TEXT) {
       masterKey = key;
       masterPassword = password;
+      // 设置免验证有效期（若开启）
+      unlockExpireAt = graceEnabled ? Date.now() + graceMinutes * 60_000 : null;
       return true;
     }
     return false;
@@ -179,10 +216,11 @@ export async function unlockVault(password: string): Promise<boolean> {
   }
 }
 
-// 锁定：清空内存密钥
+// 锁定：清空内存密钥 + 清除免验证宽限
 export async function lockVault(): Promise<void> {
   masterKey = null;
   masterPassword = null;
+  unlockExpireAt = null;
 }
 
 // 修改主密码（需已解锁）——无损版：先把全部数据用旧密钥解密，再用新密钥重新加密写回

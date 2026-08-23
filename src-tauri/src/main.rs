@@ -8,6 +8,8 @@ mod github_backup;
 pub use github_backup::*;
 use autofill::{start_autofill, AutofillState, FillTarget};
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Instant;
 
 use std::process::Command;
 use tauri::{
@@ -151,12 +153,31 @@ fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
 #[tauri::command]
 fn set_fill_target(state: tauri::State<Arc<AutofillState>>, target: Option<FillTarget>) {
     *state.target.lock().unwrap() = target;
+    // 刷新活跃时刻（避免刚设置就被闲置判定清除）
+    *state.last_active.lock().unwrap() = Instant::now();
 }
 
 // 半自动填充：前端更新热键（字符串，如 "Ins"）
 #[tauri::command]
 fn set_autofill_hotkey(state: tauri::State<Arc<AutofillState>>, hotkey: String) {
     *state.hotkey.lock().unwrap() = hotkey;
+}
+
+// 半自动填充：前端更新选项（填充后是否重置待填账号）
+#[tauri::command]
+fn set_autofill_options(state: tauri::State<Arc<AutofillState>>, reset_after_use: bool) {
+    *state.reset_after_use.lock().unwrap() = reset_after_use;
+}
+
+// 锁定策略：免验证时长是否开启。关闭时，关到托盘/最小化再开必须重新输密码
+struct LockPolicy {
+    grace_enabled: Mutex<bool>,
+}
+
+// 前端同步免验证时长开关状态
+#[tauri::command]
+fn set_grace_enabled(state: tauri::State<Arc<LockPolicy>>, enabled: bool) {
+    *state.grace_enabled.lock().unwrap() = enabled;
 }
 
 fn main() {
@@ -174,6 +195,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Arc::new(AutofillState::new()))
+        .manage(Arc::new(LockPolicy { grace_enabled: Mutex::new(false) }))
         .setup(|app| {
             // 系统托盘：Show / Lock / Quit
             let show_i = MenuItem::with_id(app, "show", "打开 FallVault", true, None::<&str>)?;
@@ -193,11 +215,14 @@ fn main() {
                             if w.is_visible().unwrap_or(false) {
                                 let _ = w.set_focus();
                             } else {
-                                // 从「关闭到托盘」恢复 → 强制重新锁定（要求重新输密码）
+                                // 从「关闭到托盘」恢复：若未开启免验证时长，则强制重新锁定（要求重输密码）
+                                let grace = *app.state::<Arc<LockPolicy>>().grace_enabled.lock().unwrap();
                                 let _ = w.show();
                                 let _ = w.unminimize();
                                 let _ = w.set_focus();
-                                let _ = app.emit("fallvault:lock", ());
+                                if !grace {
+                                    let _ = app.emit("fallvault:lock", ());
+                                }
                             }
                         }
                     }
@@ -211,12 +236,16 @@ fn main() {
                 })
                 .build(app)?;
 
-            // 关闭窗口 → 锁定的同时最小化到托盘（不退出）
+            // 关闭窗口 → 最小化到托盘（不退出）；未开启免验证时长则要求重输密码
             if let Some(win) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
                 win.clone().on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = win.emit("fallvault:lock", ());
+                        let grace = *app_handle.state::<Arc<LockPolicy>>().grace_enabled.lock().unwrap();
+                        if !grace {
+                            let _ = app_handle.emit("fallvault:lock", ());
+                        }
                         let _ = win.hide();
                     }
                 });
@@ -246,6 +275,8 @@ fn main() {
             resolve_resource,
             set_fill_target,
             set_autofill_hotkey,
+            set_autofill_options,
+            set_grace_enabled,
             github_list_repos,
             github_upload_backup,
             github_download_backup,

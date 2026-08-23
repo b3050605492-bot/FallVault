@@ -14,15 +14,13 @@ import { PasswordGenerator } from '@/components/PasswordGenerator';
 import { SecurityAuditModal } from '@/components/SecurityAuditModal';
 import { TotpMigrationModal } from '@/components/TotpMigrationModal';
 import { TitleBar } from '@/components/TitleBar';
-import { setAutofillHotkey } from '@/lib/autofill';
+import { setAutofillHotkey, setAutofillOptions } from '@/lib/autofill';
 import { LockScreen } from '@/components/LockScreen';
 import { ImportModal } from '@/components/ImportModal';
 import { useAppStore } from '@/stores/appStore';
 import { THEMES, applyTheme } from '@/types';
-import { lockVault } from '@/lib/crypto';
-import { useAutoLock } from '@/hooks/useAutoLock';
+import { lockVault, setUnlockGraceConfig, isUnlockGraceValid, hasGraceSession } from '@/lib/crypto';
 import { stopAutoBackup, startGithubAutoBackup, stopGithubAutoBackup } from '@/lib/backupManager';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { mkdirAll } from '@/lib/rustFs';
@@ -75,10 +73,17 @@ function App() {
     return () => { un.then((fn) => fn()).catch(() => {}); };
   }, []);
 
-  // 启动半自动填充：把当前设置的热键推给 Rust 端监听
+  // 启动半自动填充：把当前设置的热键 + 选项推给 Rust 端监听
   useEffect(() => {
-    setAutofillHotkey(useAppStore.getState().settings.autofillHotkey || 'Ins').catch(() => {});
+    const s = useAppStore.getState().settings;
+    setAutofillHotkey(s.autofillHotkey || 'Ins').catch(() => {});
+    setAutofillOptions(s.autofillResetAfterUse || false).catch(() => {});
   }, []);
+
+  // 半自动填充选项（填充后是否重置）变更时实时同步
+  useEffect(() => {
+    setAutofillOptions(settings.autofillResetAfterUse || false).catch(() => {});
+  }, [settings.autofillResetAfterUse]);
 
   // 首次安装（无已保存设置）时，自动把数据文件夹默认指向 exe 同级 data/ 并建好目录，开箱即用
   useEffect(() => {
@@ -95,11 +100,24 @@ function App() {
     initDefaultDataDir();
   }, []);
 
-  // 自动锁定：闲置超时自动回解锁页
-  const handleAutoLock = () => {
-    lockVault().then(() => setLocked(true)).catch(() => setLocked(true));
-  };
-  useAutoLock(settings.autoLockEnabled, settings.autoLockMinutes, !locked, handleAutoLock);
+  // 解锁宽限（免验证时长）配置同步：设置变更时推给 crypto 模块 + Rust 端（Rust 端据此决定是否在关/最小化到托盘时强制重锁）
+  useEffect(() => {
+    setUnlockGraceConfig(settings.unlockGraceEnabled, settings.unlockGraceMin);
+    invoke('set_grace_enabled', { enabled: settings.unlockGraceEnabled }).catch(() => {});
+  }, [settings.unlockGraceEnabled, settings.unlockGraceMin]);
+
+  // 窗口重新聚焦 / 从托盘唤起时，若处于免验证有效期内则直接保持解锁（不要求重输）
+  // 同时：若宽限已过期且仍停留在主界面，则自动回到锁定态（仅当曾开启过宽限）
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (hasGraceSession()) {
+        // 存在宽限会话：有效期内保持解锁，过期则回到锁定态
+        setLocked((prev) => (isUnlockGraceValid() ? (prev ? false : prev) : (prev ? prev : true)));
+      }
+      // 未开启宽限：不干预（保持原有锁定逻辑）
+    }, 1000);
+    return () => clearInterval(iv);
+  }, []);
 
   // GitHub 自动备份调度器：放在 App 层（始终存活），不受设置面板开关影响
   useEffect(() => {
@@ -111,18 +129,6 @@ function App() {
     stopGithubAutoBackup();
     return undefined;
   }, [settings.githubAutoBackup.enabled, settings.githubAutoBackup.intervalMin, settings.githubAutoBackup.repo, settings.githubAutoBackup.tokenLabel]);
-  useEffect(() => {
-    const unlistenFn = getCurrentWindow().onResized(async () => {
-      // 仅当窗口被最小化时锁定
-      const win = getCurrentWindow();
-      const minimized = await win.isMinimized();
-      if (minimized) {
-        await lockVault();
-        setLocked(true);
-      }
-    });
-    return () => { unlistenFn.then((fn) => fn()).catch(() => {}); };
-  }, []);
 
   // 解锁后刷新数据（分类/标签/账号）
   const handleUnlocked = () => {

@@ -75,13 +75,14 @@ const defaultSettings: AppSettings = {
     opacity: 1,
     darkOverlay: 0.45,
   },
-  autoLockEnabled: true,
-  autoLockMinutes: 5,
   clipboardClearSeconds: 30,
   autoBackupEnabled: true,
   autoBackupMax: 5,
   autoBackupIntervalMin: 60,
+  unlockGraceEnabled: false,
+  unlockGraceMin: 15,
   totpOffsetSec: 0,
+  autofillResetAfterUse: false,
   githubAutoBackup: {
     enabled: false,
     intervalMin: 720, // 默认 12 小时

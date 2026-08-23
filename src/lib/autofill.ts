@@ -15,6 +15,15 @@ export async function setFillTarget(payload: FillPayload | null): Promise<void> 
   }
 }
 
+// 更新填充选项（填充后是否重置待填账号）
+export async function setAutofillOptions(resetAfterUse: boolean): Promise<void> {
+  try {
+    await invoke('set_autofill_options', { resetAfterUse });
+  } catch {
+    // 忽略
+  }
+}
+
 // 更新全局热键
 export async function setAutofillHotkey(hotkey: string): Promise<void> {
   try {
