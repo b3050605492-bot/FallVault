@@ -76,6 +76,7 @@ export interface AppSettings {
   autoBackupEnabled: boolean;
   autoBackupMax: number;
   autoBackupIntervalMin: number;
+  totpOffsetSec: number; // TOTP 时间偏移校正（秒），补偿本机与验证器设备的时间差
   githubAutoBackup: {
     enabled: boolean;
     intervalMin: number; // 备份间隔（分钟）：1/720/1440/2880/5760

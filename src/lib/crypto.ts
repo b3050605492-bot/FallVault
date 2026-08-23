@@ -1,6 +1,7 @@
 // FallVault 加密核心：主密码 + PBKDF2 派生 + AES-256-GCM 字段加密
 // 使用 Web Crypto API（Tauri WebView 原生支持，无需外部依赖）
 import Database from '@tauri-apps/plugin-sql';
+import { getDbPath } from './dbPath';
 
 // 内存中的主密钥（解锁后持有，锁定后清空）
 let masterKey: CryptoKey | null = null;
@@ -25,7 +26,7 @@ let db: Database | null = null;
 
 async function metaDb(): Promise<Database> {
   if (db) return db;
-  db = await Database.load('sqlite:fallvault.db');
+  db = await Database.load(await getDbPath());
   await db.execute(META_SQL);
   return db;
 }
@@ -190,7 +191,7 @@ export async function changeMasterPassword(newPassword: string): Promise<void> {
   const oldKey = masterKey;
 
   // 1. 用旧密钥读出全部明文
-  const d = await Database.load('sqlite:fallvault.db');
+  const d = await Database.load(await getDbPath());
   const entries: any[] = await d.select(
     'SELECT id, username, password, notes FROM entries'
   );
@@ -255,7 +256,7 @@ export async function changeMasterPassword(newPassword: string): Promise<void> {
 // 用法：setupMasterPassword(pw) 之后调用
 export async function migratePlaintextToEncrypted(): Promise<number> {
   if (!masterKey) throw new Error('vault locked');
-  const d = await Database.load('sqlite:fallvault.db');
+  const d = await Database.load(await getDbPath());
   const rows: any[] = await d.select(
     'SELECT id, username, password, notes FROM entries'
   );
@@ -317,7 +318,7 @@ export interface IntegrityReport {
 export async function verifyIntegrity(): Promise<IntegrityReport> {
   const report: IntegrityReport = { ok: true, corruptEntries: 0, checkedEntries: 0 };
   try {
-    const d = await Database.load('sqlite:fallvault.db');
+    const d = await Database.load(await getDbPath());
     // 1) SQLite 物理完整性检查
     const rows: any[] = await d.select('PRAGMA integrity_check');
     const result = rows?.[0]?.['integrity_check'] ?? rows?.[0]?.integrity_check ?? rows?.[0]?.toString?.() ?? '';

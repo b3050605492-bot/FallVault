@@ -1,8 +1,32 @@
-// TOTP 验证码工具（RFC 6238，HMAC-SHA1，30 秒周期，6 位码）
-// 使用 Web Crypto API 实现，零外部依赖
+// TOTP 验证码工具（RFC 6238）
+// 默认 HMAC-SHA1 / 30 秒 / 6 位；若传入完整的 otpauth:// URI，则尊重其中的
+// algorithm / digits / period 参数（兼容 SHA256 / SHA512 / 8 位 等服务）
 
-const PERIOD = 30;
-const DIGITS = 6;
+type Algo = 'SHA-1' | 'SHA-256' | 'SHA-512';
+
+// TOTP 时间偏移校正（秒）：补偿本机时间与验证器设备（如 Google 验证器）的时间差。
+// 由 App 启动时从设置读取并 setTotpOffset() 注入，默认 0。
+let totpOffsetSec = 0;
+export function setTotpOffset(sec: number): void {
+  totpOffsetSec = Number.isFinite(sec) ? sec : 0;
+}
+
+function parseTotpParams(secretOrUri: string): { secret: string; algo: Algo; digits: number; period: number } {
+  const raw = (secretOrUri || '').trim();
+  // 完整 otpauth:// URI：提取 secret 与参数
+  if (raw.toLowerCase().startsWith('otpauth://')) {
+    try {
+      const u = new URL(raw);
+      const secret = u.searchParams.get('secret') || '';
+      const algoParam = (u.searchParams.get('algorithm') || 'SHA1').toUpperCase().replace('SHA', 'SHA-');
+      const algo: Algo = algoParam === 'SHA-256' ? 'SHA-256' : algoParam === 'SHA-512' ? 'SHA-512' : 'SHA-1';
+      const digits = parseInt(u.searchParams.get('digits') || '6', 10) || 6;
+      const period = parseInt(u.searchParams.get('period') || '30', 10) || 30;
+      return { secret: secret.trim(), algo, digits, period };
+    } catch { /* 解析失败回落到明文 */ }
+  }
+  return { secret: raw, algo: 'SHA-1', digits: 6, period: 30 };
+}
 
 // Base32 解码（RFC 4648，忽略空格和 = 填充）
 export function base32Decode(input: string): Uint8Array {
@@ -102,8 +126,10 @@ function bytesToBase32(b: Uint8Array): string {
   let bits = '';
   for (const byte of b) bits += byte.toString(2).padStart(8, '0');
   let out = '';
-  for (let i = 0; i + 5 <= bits.length; i += 5) {
-    out += alphabet[parseInt(bits.slice(i, i + 5), 2)];
+  // 每 5 bit 一组（不足 5 bit 的末尾补 0），保证完整编码所有字节
+  for (let i = 0; i < bits.length; i += 5) {
+    const chunk = bits.slice(i, i + 5).padEnd(5, '0');
+    out += alphabet[parseInt(chunk, 2)];
   }
   return out;
 }
@@ -112,9 +138,12 @@ export interface MigratedTotp {
   secret: string;
   name: string;
   issuer: string;
+  algorithm: 'SHA1' | 'SHA256' | 'SHA512';
+  digits: number;
+  period: number;
 }
 
-// 解析 Google 导出链接，返回所有 TOTP 条目
+// 解析 Google 导出链接，返回所有 TOTP 条目（secret 为完整 base32，附带算法/位数/周期）
 export function parseGoogleMigration(uri: string): MigratedTotp[] {
   try {
     const u = new URL(uri);
@@ -136,12 +165,27 @@ export function parseGoogleMigration(uri: string): MigratedTotp[] {
       let secret = '';
       let name = '';
       let issuer = '';
+      let algo: 'SHA1' | 'SHA256' | 'SHA512' = 'SHA1';
+      let digits = 6;
+      let period = 30;
       for (const g of inner) {
         if (g.tag === 1 && g.value instanceof Uint8Array) secret = bytesToBase32(g.value as Uint8Array);
         else if (g.tag === 2 && g.value instanceof Uint8Array) name = bytesToStr(g.value as Uint8Array);
         else if (g.tag === 3 && g.value instanceof Uint8Array) issuer = bytesToStr(g.value as Uint8Array);
+        else if (g.tag === 4 && typeof g.value === 'number') {
+          // Google enum: 1=SHA1, 2=SHA256, 3=SHA512
+          algo = g.value === 2 ? 'SHA256' : g.value === 3 ? 'SHA512' : 'SHA1';
+        } else if (g.tag === 5 && typeof g.value === 'number') {
+          // Google enum: 1=SIX(6), 2=EIGHT(8)
+          digits = g.value === 2 ? 8 : 6;
+        } else if (g.tag === 7 && typeof g.value === 'number') period = g.value || 30;
       }
-      if (secret) out.push({ secret: secret.trim().toUpperCase(), name, issuer });
+      if (secret) {
+        const enc = (s: string) => encodeURIComponent(s);
+        // 存为完整 otpauth:// URI，携带算法/位数/周期，TOTP 生成时尊重这些参数
+        const uriStr = `otpauth://totp/${enc(name || issuer || 'FallVault')}?secret=${enc(secret.trim().toUpperCase())}&issuer=${enc(issuer || '')}&algorithm=${algo}&digits=${digits}&period=${period}`;
+        out.push({ secret: uriStr, name, issuer, algorithm: algo, digits, period });
+      }
     }
     return out;
   } catch {
@@ -149,39 +193,44 @@ export function parseGoogleMigration(uri: string): MigratedTotp[] {
   }
 }
 
-async function hmacSha1(key: Uint8Array, msg: Uint8Array): Promise<Uint8Array> {
+async function hmacSha(secret: Uint8Array, msg: Uint8Array, algo: Algo): Promise<Uint8Array> {
   const cryptoKey = await crypto.subtle.importKey(
-    'raw', key as unknown as BufferSource, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']
+    'raw', secret as unknown as BufferSource, { name: 'HMAC', hash: algo }, false, ['sign']
   );
   const sig = await crypto.subtle.sign('HMAC', cryptoKey, msg as unknown as BufferSource);
   return new Uint8Array(sig);
 }
 
-// 计算当前/指定时刻的 6 位 TOTP 码
-export async function generateTotp(secretB32: string, atSeconds?: number): Promise<string> {
-  const key = base32Decode(secretB32);
-  const time = Math.floor((atSeconds ?? Date.now() / 1000) / PERIOD);
+// 计算指定时刻的 TOTP 码（支持 SHA1/256/512、6/8 位、任意 period）
+// atSeconds 缺省时取本机时间 + totpOffsetSec（补偿时间差）
+export async function generateTotp(secretOrUri: string, atSeconds?: number): Promise<string> {
+  const { secret, algo, digits, period } = parseTotpParams(secretOrUri);
+  const key = base32Decode(secret);
+  const t = (atSeconds ?? Math.floor(Date.now() / 1000)) + totpOffsetSec;
+  const time = Math.floor(t / period);
   const buffer = new ArrayBuffer(8);
   const view = new DataView(buffer);
   // 大端 64 位时间计数
   view.setUint32(0, Math.floor(time / 2 ** 32));
   view.setUint32(4, time >>> 0);
 
-  const hmac = await hmacSha1(key, new Uint8Array(buffer));
+  const hmac = await hmacSha(key, new Uint8Array(buffer), algo);
   const offset = hmac[hmac.length - 1] & 0x0f;
   const binary =
     ((hmac[offset] & 0x7f) << 24) |
     ((hmac[offset + 1] & 0xff) << 16) |
     ((hmac[offset + 2] & 0xff) << 8) |
     (hmac[offset + 3] & 0xff);
-  const otp = binary % 10 ** DIGITS;
-  return otp.toString().padStart(DIGITS, '0');
+  const otp = binary % 10 ** digits;
+  return otp.toString().padStart(digits, '0');
 }
 
 // 返回 { code, remainingSeconds }（剩余秒数用于 UI 倒计时）
-export async function getTotpWithRemaining(secretB32: string): Promise<{ code: string; remaining: number }> {
+// 倒计时按本机窗口计算（不受偏移影响，UI 仍每 30s 刷新）
+export async function getTotpWithRemaining(secretOrUri: string): Promise<{ code: string; remaining: number }> {
+  const { period } = parseTotpParams(secretOrUri);
   const now = Math.floor(Date.now() / 1000);
-  const remaining = PERIOD - (now % PERIOD);
-  const code = await generateTotp(secretB32, now);
+  const remaining = period - (now % period);
+  const code = await generateTotp(secretOrUri, now);
   return { code, remaining };
 }

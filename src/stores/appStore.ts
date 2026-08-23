@@ -81,6 +81,7 @@ const defaultSettings: AppSettings = {
   autoBackupEnabled: true,
   autoBackupMax: 5,
   autoBackupIntervalMin: 60,
+  totpOffsetSec: 0,
   githubAutoBackup: {
     enabled: false,
     intervalMin: 720, // 默认 12 小时

@@ -4,6 +4,7 @@
 import { writeFile } from '@tauri-apps/plugin-fs';
 import Database from '@tauri-apps/plugin-sql';
 import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
+import { getDbPath } from './dbPath';
 
 const PBKDF2_ITERATIONS = 150_000;
 const SALT_LENGTH = 16;
@@ -106,7 +107,7 @@ export async function buildBackupContent(
   const masterKey = getMasterKey();
   if (!masterKey) throw new Error('vault locked');
 
-  const d = await Database.load('sqlite:fallvault.db');
+  const d = await Database.load(await getDbPath());
 
   // 读取全部数据
   const folderRows: any[] = await d.select('SELECT * FROM folders');
@@ -267,7 +268,7 @@ async function applyBackupContent(password: string, text: string): Promise<Resto
   const data: BackupData = JSON.parse(new TextDecoder().decode(dataBytes));
   if (data.app !== 'FallVault') throw new Error('不是 FallVault 备份');
 
-  const d = await Database.load('sqlite:fallvault.db');
+  const d = await Database.load(await getDbPath());
   const masterKey = getMasterKey();
   if (!masterKey) throw new Error('vault locked');
 

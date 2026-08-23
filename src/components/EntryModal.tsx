@@ -577,8 +577,14 @@ export function EntryModal() {
                   }
                 } else if (raw.startsWith('otpauth://')) {
                   const s = parseOtpAuth(raw);
-                  setForm({ ...form, totp_secret: s || raw });
-                  setTotpInfo(s ? { fromMigration: false } : null);
+                  if (s) {
+                    // 存入完整 otpauth:// URI（保留 algorithm/digits/period 参数，避免 SHA256/8位 等算出无效码）
+                    setForm({ ...form, totp_secret: raw });
+                    setTotpInfo({ fromMigration: false });
+                  } else {
+                    setForm({ ...form, totp_secret: raw });
+                    setTotpInfo(null);
+                  }
                 } else {
                   setForm({ ...form, totp_secret: raw });
                   setTotpInfo(null);

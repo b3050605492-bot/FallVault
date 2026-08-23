@@ -3,6 +3,7 @@ import { remove } from '@tauri-apps/plugin-fs';
 import { appDataDir } from '@tauri-apps/api/path';
 import type { Entry, Folder, Tag, PasswordHistory, Attachment } from '@/types';
 import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
+import { getDbPath } from './dbPath';
 
 let db: Database | null = null;
 
@@ -93,7 +94,7 @@ INSERT OR IGNORE INTO tags (id, name, color) VALUES
 
 export async function initDatabase(): Promise<Database> {
   if (db) return db;
-  db = await Database.load('sqlite:fallvault.db');
+  db = await Database.load(await getDbPath());
   await db.execute(INIT_SQL);
   // 兼容迁移：老库补列（ALTER TABLE 已存在列会报错，捕获忽略）
   const migrations = [

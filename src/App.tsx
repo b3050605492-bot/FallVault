@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useDatabase } from '@/hooks/useDatabase';
+import { setTotpOffset } from '@/lib/totp';
 import { Background } from '@/components/Background';
 import { Sidebar } from '@/components/Sidebar';
 import { TopBar } from '@/components/TopBar';
@@ -42,6 +43,11 @@ function App() {
     document.documentElement.style.setProperty('--glass-alpha', Math.min(0.75, Math.max(0.1, glassAlpha)).toFixed(2));
     document.documentElement.style.setProperty('data-theme', theme.id);
   }, []);
+
+  // TOTP 时间偏移校正：启动注入 + 设置变更时实时更新
+  useEffect(() => {
+    setTotpOffset(settings.totpOffsetSec || 0);
+  }, [settings.totpOffsetSec]);
 
   // 启动时等待 LockScreen 初始化（内部检测是否有主密码）
   // locked 初始 true → 显示解锁屏；解锁后 false 显示主界面

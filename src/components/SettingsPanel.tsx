@@ -3,7 +3,7 @@ import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
 import { BUILTIN_WALLPAPERS, DEFAULT_BG_TOKEN } from '@/lib/constants';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard, Github, HelpCircle } from 'lucide-react';
+import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard, Github, HelpCircle, KeyRound } from 'lucide-react';
 import { changeMasterPassword, lockVault } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
 import { copyFile, removePath } from '@/lib/rustFs';
@@ -694,7 +694,35 @@ export function SettingsPanel() {
             </div>
           </div>
 
-          {/* 半自动填充热键 */}
+          {/* TOTP 时间偏移校正 */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <KeyRound size={15} style={{ color: 'var(--mint)' }} />
+              <h3 className="text-sm font-semibold text-[var(--moon)]">{isEn ? 'TOTP Time Offset' : 'TOTP 时间偏移校正'}</h3>
+            </div>
+            <p className="text-xs text-[var(--moon-faint)] mb-3">
+              {isEn
+                ? 'If FallVault 2FA codes differ from your authenticator app (e.g. Google Authenticator), your PC clock may be off. Enter the difference in seconds so codes align. Positive = your PC is behind, negative = ahead.'
+                : '若 FallVault 的 2FA 验证码与验证器 App（如谷歌验证器）不一致，多半是本机时间与验证器设备时间有偏差。填入差值（秒）即可对齐：正数为本机偏慢、负数为本机偏快。'}
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={settings.totpOffsetSec ?? 0}
+                onChange={(e) => updateSettings({ totpOffsetSec: parseInt(e.target.value || '0', 10) || 0 })}
+                className="w-32 px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.06)] border border-[rgba(210,210,220,0.12)] text-[var(--moon)] text-sm focus:outline-none focus:border-[var(--mint)]"
+                placeholder="0"
+              />
+              <span className="text-xs text-[var(--moon-faint)]">{isEn ? 'seconds' : '秒'}</span>
+              <button
+                onClick={() => updateSettings({ totpOffsetSec: 0 })}
+                className="text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.08)] text-[var(--moon-faint)] hover:bg-[rgba(210,210,220,0.16)] transition-all"
+              >
+                {isEn ? 'Reset' : '归零'}
+              </button>
+            </div>
+          </div>
+
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Keyboard size={15} style={{ color: 'var(--mint)' }} />
