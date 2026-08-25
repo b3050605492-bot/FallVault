@@ -6,10 +6,11 @@ import { useToastStore } from '@/stores/toastStore';
 import { THEMES } from '@/types';
 import { translate, LangKey } from '@/lib/i18n';
 import { SpecularButton } from '@/components/SpecularButton';
-import { exportToXlsx, exportToCsv, exportToJson, buildTxt } from '@/lib/exportEntries';
+import { exportToXlsx, exportToCsv, exportToJson, buildTxt, exportAttachments } from '@/lib/exportEntries';
 import { importBrowserCsv } from '@/lib/csvImport';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile, mkdir } from '@tauri-apps/plugin-fs';
+import { basename } from '@tauri-apps/api/path';
 
 export function TopBar() {
   const { searchQuery, setSearchQuery, settings, updateSettings } = useAppStore();
@@ -136,13 +137,24 @@ export function TopBar() {
       } else if (format === 'json') {
         await exportToJson(entries, state.folders, state.tags, filePath);
       } else {
-        const text = buildTxt(entries, state.folders, state.tags);
+        const text = await buildTxt(entries, state.folders, state.tags);
         // 确保父目录存在
         const parent = filePath.substring(0, filePath.lastIndexOf('\\'));
-        try { await mkdir(parent, { recursive: true }); } catch {}
+        try { await mkdir(parent, { recursive: true }); } catch { }
         await writeFile(filePath, new TextEncoder().encode(text));
       }
-      addToast(isEn ? `Exported ${entries.length} entries` : `已导出 ${entries.length} 个账号`, 'success');
+
+      // 附件：解密并复制真文件到 {文件名}_attachments/ 子目录
+      let attMsg = '';
+      try {
+        const n = await exportAttachments(entries, filePath);
+        if (n > 0) {
+          const bn = await basename(filePath);
+          attMsg = `，附件 ${n} 个已导出到 ${bn.replace(/\.[^.]+$/, '')}_attachments/`;
+        }
+      } catch { /* 附件失败不影响主文件 */ }
+
+      addToast(isEn ? `Exported ${entries.length} entries${attMsg}` : `已导出 ${entries.length} 个账号${attMsg}`, 'success');
     } catch (e) {
       console.error('Export failed:', e);
       addToast(isEn ? 'Export failed' : '导出失败，请重试', 'error');
