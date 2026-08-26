@@ -48,6 +48,7 @@ export function SettingsPanel() {
   const [ghLastBackup, setGhLastBackup] = useState<{ repo: string; time: string } | null>(null);
   const [dataDir, setDataDir] = useState<string>('');
   const [capturing, setCapturing] = useState(false);
+  const [capturingQuick, setCapturingQuick] = useState(false); // 快速打开热键捕获
 
   // 把键盘事件的 code 映射成 Rust 端 rdev 变体名 token（支持任意键）
   const codeToToken = (code: string): string | null => {
@@ -120,6 +121,34 @@ export function SettingsPanel() {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [capturing]);
+
+  // 捕获快速打开热键：支持「单键」或「组合键」（Ctrl/Alt/Shift + 主键），Esc 取消
+  useEffect(() => {
+    if (!capturingQuick) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === 'Escape') { setCapturingQuick(false); return; }
+      const mods: string[] = [];
+      if (e.ctrlKey) mods.push('Ctrl');
+      if (e.altKey) mods.push('Alt');
+      if (e.shiftKey) mods.push('Shift');
+      // 主键（排除纯修饰键），并转成 Tauri global-shortcut 接受的格式（KeyQ->Q, Num1->1, Return->Enter）
+      const raw = codeToToken(e.code);
+      if (!raw) return; // 只按修饰键，等主键
+      let alone = raw;
+      if (/^Key([A-Z])$/.test(raw)) alone = raw.slice(3);
+      else if (/^Num([0-9])$/.test(raw)) alone = raw.slice(3);
+      else if (raw === 'Return') alone = 'Enter';
+      else if (raw === 'BackQuote') alone = '`';
+      else if (raw === 'Space') alone = 'Space';
+      const combo = [...mods, alone].join('+');
+      setCapturingQuick(false);
+      updateSettings({ quickOpenHotkey: combo });
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [capturingQuick]);
 
   // 用系统文件管理器打开文件夹（Rust 命令）
   const openFolder = async (path: string) => {
@@ -762,6 +791,47 @@ export function SettingsPanel() {
               />
               {isEn ? 'Reset fill target after each fill (re-select account next time)' : '每次填充后重置账号（开启后填一次即清除，下次需重新选择）'}
             </label>
+          </div>
+
+          {/* 快速打开热键 */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Keyboard size={15} style={{ color: 'var(--mint)' }} />
+              <h3 className="text-sm font-semibold text-[var(--moon)]">{isEn ? 'Quick Open Hotkey' : '快速打开热键'}</h3>
+            </div>
+            <p className="text-xs text-[var(--moon-faint)] mb-3">
+              {isEn
+                ? 'A global shortcut to bring FallVault to front (from tray / minimized / background) while the app is running. Press single key or a combo (Ctrl/Alt/Shift + key). Set empty to disable.'
+                : '软件在跑时，按此全局快捷键一键唤起窗口（从托盘 / 最小化 / 后台均可）。支持单键或组合键（Ctrl/Alt/Shift + 主键）。设为空可关闭。'}
+            </p>
+            <div className="flex items-center gap-2">
+              {capturingQuick ? (
+                <button
+                  className="px-3 py-2 rounded-xl bg-[rgba(125,211,192,0.18)] border border-[var(--mint)] text-[var(--mint)] text-sm animate-pulse"
+                  onClick={() => setCapturingQuick(false)}
+                >
+                  {isEn ? 'Press combo… (Esc to cancel)' : '按下按键（组合键可加 Ctrl/Alt/Shift）…（Esc 取消）'}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setCapturingQuick(true)}
+                  className="px-3 py-2 rounded-xl bg-[rgba(18,18,30,0.6)] border border-[rgba(192,200,216,0.12)] text-[var(--moon)] text-sm hover:border-[var(--mint)] transition-all min-w-[120px] text-left"
+                >
+                  {settings.quickOpenHotkey ? tokenToLabel(settings.quickOpenHotkey) : (isEn ? 'Disabled' : '已关闭')}
+                </button>
+              )}
+              {settings.quickOpenHotkey && (
+                <button
+                  onClick={() => updateSettings({ quickOpenHotkey: '' })}
+                  className="text-xs text-[var(--moon-faint)] hover:text-[var(--mint)] transition-colors"
+                >
+                  {isEn ? 'Clear' : '清除'}
+                </button>
+              )}
+              <span className="text-xs text-[var(--moon-faint)]">
+                {isEn ? 'Click then press key/combo (Esc to cancel)' : '点击后按一下按键或组合键（Esc 取消）'}
+              </span>
+            </div>
           </div>
 
 

@@ -17,6 +17,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager, WindowEvent,
 };
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 // 用系统文件管理器打开指定文件夹（Windows 下调用 explorer）
 #[tauri::command]
@@ -180,6 +181,25 @@ fn set_grace_enabled(state: tauri::State<Arc<LockPolicy>>, enabled: bool) {
     *state.grace_enabled.lock().unwrap() = enabled;
 }
 
+// 快速打开：在 Rust 端注册全局快捷键（不依赖 webview 是否存活，托盘/最小化均可触发）
+#[tauri::command]
+fn set_quick_open_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<(), String> {
+    let gs = app.global_shortcut();
+    // 先清掉可能残留的旧快捷键
+    let _ = gs.unregister_all();
+    if hotkey.trim().is_empty() {
+        return Ok(());
+    }
+    gs.on_shortcut(hotkey.as_str(), move |app, _shortcut, _event| {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+    })
+    .map_err(|e| format!("注册快速打开热键失败：{}", e))
+}
+
 fn main() {
     tauri::Builder::default()
         // 单实例：多次双击 exe 只保留一个应用，新实例聚焦已有窗口并退出
@@ -194,6 +214,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Arc::new(AutofillState::new()))
         .manage(Arc::new(LockPolicy { grace_enabled: Mutex::new(false) }))
         .setup(|app| {
@@ -277,6 +298,7 @@ fn main() {
             set_autofill_hotkey,
             set_autofill_options,
             set_grace_enabled,
+            set_quick_open_hotkey,
             github_list_repos,
             github_upload_backup,
             github_download_backup,

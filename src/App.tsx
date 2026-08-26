@@ -20,6 +20,7 @@ import { ImportModal } from '@/components/ImportModal';
 import { useAppStore } from '@/stores/appStore';
 import { THEMES, applyTheme } from '@/types';
 import { lockVault, setUnlockGraceConfig, isUnlockGraceValid, hasGraceSession } from '@/lib/crypto';
+import { setQuickOpenHotkey } from '@/lib/quickOpen';
 import { stopAutoBackup, startGithubAutoBackup, stopGithubAutoBackup } from '@/lib/backupManager';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -79,6 +80,17 @@ function App() {
     setAutofillHotkey(s.autofillHotkey || 'Ins').catch(() => {});
     setAutofillOptions(s.autofillResetAfterUse || false).catch(() => {});
   }, []);
+
+  // 启动快速打开：注册全局快捷键（软件在跑时一键唤起窗口）
+  useEffect(() => {
+    const s = useAppStore.getState().settings;
+    setQuickOpenHotkey(s.quickOpenHotkey || '').catch(() => {});
+  }, []);
+
+  // 快速打开热键变更时实时重新注册
+  useEffect(() => {
+    setQuickOpenHotkey(settings.quickOpenHotkey || '').catch(() => {});
+  }, [settings.quickOpenHotkey]);
 
   // 半自动填充选项（填充后是否重置）变更时实时同步
   useEffect(() => {

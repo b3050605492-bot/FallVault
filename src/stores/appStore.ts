@@ -83,6 +83,7 @@ const defaultSettings: AppSettings = {
   unlockGraceMin: 15,
   totpOffsetSec: 0,
   autofillResetAfterUse: false,
+  quickOpenHotkey: 'Ctrl+Q',
   githubAutoBackup: {
     enabled: false,
     intervalMin: 720, // 默认 12 小时

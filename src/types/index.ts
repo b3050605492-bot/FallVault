@@ -79,6 +79,8 @@ export interface AppSettings {
   unlockGraceMin: number; // 免验证时长（分钟）：5/15/30/60
   totpOffsetSec: number; // TOTP 时间偏移校正（秒），补偿本机与验证器设备的时间差
   autofillResetAfterUse: boolean; // 半自动填充：填充一次后是否重置待填账号（true=需重新选择，false=可连续填充）
+  // 快速打开热键（全局唤起窗口）：单键或组合键，如 "Ctrl+Q"；空字符串=关闭
+  quickOpenHotkey: string;
   githubAutoBackup: {
     enabled: boolean;
     intervalMin: number; // 备份间隔（分钟）：1/720/1440/2880/5760
