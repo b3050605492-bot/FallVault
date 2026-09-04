@@ -157,6 +157,7 @@ export function SettingsPanel() {
       await invoke('open_folder', { path });
     } catch (e) {
       console.error('open folder failed', e);
+      addToast(isEn ? 'Unable to open folder; check whether the path exists' : '无法打开文件夹，请检查路径是否存在', 'error');
     }
   };
 

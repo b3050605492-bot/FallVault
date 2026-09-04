@@ -42,9 +42,9 @@ export function EntryList() {
             : '没有找到匹配的账号'}
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-20">
+      <div className="grid auto-rows-[160px] grid-cols-1 items-stretch gap-3 pb-20 md:grid-cols-2 xl:grid-cols-3">
         {displayEntries.map((entry, i) => (
-          <div key={entry.id} className="fade-up" style={{ animationDelay: `${i * 0.05}s`, animationFillMode: 'both' }}>
+          <div key={entry.id} className="fade-up h-full" style={{ animationDelay: `${i * 0.05}s`, animationFillMode: 'both' }}>
             <EntryCard entry={entry} index={i} />
           </div>
         ))}

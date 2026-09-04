@@ -84,7 +84,7 @@ INSERT OR IGNORE INTO folders (id, name, icon, sort_order) VALUES
 -- 插入默认标签
 INSERT OR IGNORE INTO tags (id, name, color) VALUES 
   (1, '常用', '#7DD3C0'),
-  (2, '重要', '#9B8DB5'),
+  (2, '重要', '#F59E0B'),
   (3, '待更新', '#D4B070'),
   (4, '游戏', '#C0C8D8'),
   (5, '银行', '#7DB8D3');
@@ -106,6 +106,11 @@ export async function initDatabase(): Promise<Database> {
       await db.execute(m);
     } catch {}
   }
+  // 将仍使用旧默认紫色的“重要”标签迁移为橙色；用户自定义过的颜色保持不变
+  await db.execute(
+    "UPDATE tags SET color = ? WHERE name = ? AND color = ?",
+    ['#F59E0B', '重要', '#9B8DB5']
+  );
   return db;
 }
 

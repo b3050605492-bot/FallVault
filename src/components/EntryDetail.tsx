@@ -8,6 +8,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { getTotpWithRemaining } from '@/lib/totp';
 import type { Entry } from '@/types';
 import { setFillTarget } from '@/lib/autofill';
+import { openExternalWebsite } from '@/lib/openExternal';
 
 function getFaviconUrl(website: string): string | null {
   if (!website) return null;
@@ -120,6 +121,14 @@ export function EntryDetail() {
     addToast(isEn ? 'Fill target set — press the hotkey in your browser' : '已设为待填：去浏览器按热键即可填充', 'success');
   };
 
+  const handleOpenWebsite = async () => {
+    try {
+      await openExternalWebsite(entry.website);
+    } catch {
+      addToast(isEn ? 'Unable to open website' : '无法打开网站链接', 'error');
+    }
+  };
+
   const tagNames = entry.tag_names ? entry.tag_names.split(',') : [];
   const tagColors = entry.tag_colors ? entry.tag_colors.split(',') : [];
 
@@ -156,12 +165,15 @@ export function EntryDetail() {
           <div className="min-w-0 flex-1">
             <h2 className="font-bold text-[var(--moon)] text-lg leading-tight truncate">{entry.title}</h2>
             {entry.website && (
-              <a href={entry.website.startsWith('http') ? entry.website : `https://${entry.website}`}
-                target="_blank" rel="noopener noreferrer"
-                className="text-[12px] text-[var(--moon-dim)] hover:text-[var(--mint)] flex items-center gap-1 truncate transition-colors mt-1 font-medium">
-                {entry.website}
-                <ExternalLink size={10} />
-              </a>
+              <button
+                type="button"
+                onClick={handleOpenWebsite}
+                className="mt-1 flex max-w-full items-center gap-1 text-[12px] font-medium text-[var(--moon-dim)] transition-colors hover:text-[var(--mint)]"
+                title={isEn ? 'Open website in browser' : '在浏览器中打开网站'}
+              >
+                <span className="truncate">{entry.website}</span>
+                <ExternalLink size={10} className="shrink-0" />
+              </button>
             )}
           </div>
           <button onClick={handleToggleFavorite}
