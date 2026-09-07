@@ -86,7 +86,8 @@ const defaultSettings: AppSettings = {
   quickOpenHotkey: 'Ctrl+Q',
   githubAutoBackup: {
     enabled: false,
-    intervalMin: 720, // 默认 12 小时
+    intervalMin: 360, // 默认 6 小时；修改后另有 3 分钟防抖备份
+    maxBackups: 10,
     repo: '',
     tokenLabel: '',
   },
@@ -101,7 +102,24 @@ function loadSettings(): AppSettings {
     const raw = localStorage.getItem('fallvault-settings');
     if (raw) {
       const saved = JSON.parse(raw);
-      const merged = { ...defaultSettings, ...saved, background: { ...defaultSettings.background, ...(saved.background || {}) } };
+      const merged = {
+        ...defaultSettings,
+        ...saved,
+        background: { ...defaultSettings.background, ...(saved.background || {}) },
+        githubAutoBackup: { ...defaultSettings.githubAutoBackup, ...(saved.githubAutoBackup || {}) },
+      };
+      // 迁移旧版 1 分钟测试档及 48/96 小时档位到新的正式间隔。
+      const githubIntervals = [30, 60, 180, 360, 720, 1440];
+      const savedGithubInterval = Number(merged.githubAutoBackup.intervalMin);
+      if (!githubIntervals.includes(savedGithubInterval)) {
+        merged.githubAutoBackup.intervalMin = Number.isFinite(savedGithubInterval)
+          ? (githubIntervals.find((interval) => savedGithubInterval <= interval) || 1440)
+          : defaultSettings.githubAutoBackup.intervalMin;
+      }
+      const savedGithubMax = Number(merged.githubAutoBackup.maxBackups);
+      if (![5, 10, 20, 30, 50].includes(savedGithubMax)) {
+        merged.githubAutoBackup.maxBackups = defaultSettings.githubAutoBackup.maxBackups;
+      }
       // 迁移：旧版保存的 shiro 视频路径（写死绝对路径、换机器读不到）统一替换为内置图片
       const OLD_SHIRO = 'D:\\Steam\\steamapps\\workshop\\content\\431960\\3640752243\\白凪shiro.mp4';
       if (merged.background?.source === OLD_SHIRO || (merged.background?.source || '').toLowerCase().endsWith('白凪shiro.mp4')) {

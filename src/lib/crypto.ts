@@ -2,6 +2,7 @@
 // 使用 Web Crypto API（Tauri WebView 原生支持，无需外部依赖）
 import Database from '@tauri-apps/plugin-sql';
 import { getDbPath } from './dbPath';
+import { markVaultChanged } from './vaultChange';
 
 // 内存中的主密钥（解锁后持有，锁定后清空）
 let masterKey: CryptoKey | null = null;
@@ -288,6 +289,7 @@ export async function changeMasterPassword(newPassword: string): Promise<void> {
   await metaSet('master_verifier', verifier);
   masterKey = newKey;
   masterPassword = newPassword;
+  markVaultChanged();
 }
 
 // 首次设置主密码后：把数据库里已有的明文数据加密写回（数据迁移）
@@ -299,6 +301,7 @@ export async function migratePlaintextToEncrypted(): Promise<number> {
     'SELECT id, username, password, notes FROM entries'
   );
   let migrated = 0;
+  let changed = false;
   for (const r of rows) {
     const updates: string[] = [];
     const params: any[] = [];
@@ -322,6 +325,7 @@ export async function migratePlaintextToEncrypted(): Promise<number> {
         params
       );
       migrated++;
+      changed = true;
     }
     // 密码历史也要加密
     const his: any[] = await d.select(
@@ -333,9 +337,11 @@ export async function migratePlaintextToEncrypted(): Promise<number> {
           'UPDATE password_history SET old_password = ? WHERE id = ?',
           [await encryptField(masterKey, h.old_password), h.id]
         );
+        changed = true;
       }
     }
   }
+  if (changed) markVaultChanged();
   return migrated;
 }
 

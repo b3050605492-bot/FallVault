@@ -4,6 +4,7 @@ import { appDataDir } from '@tauri-apps/api/path';
 import type { Entry, Folder, Tag, PasswordHistory, Attachment } from '@/types';
 import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
 import { getDbPath } from './dbPath';
+import { markVaultChanged } from './vaultChange';
 
 let db: Database | null = null;
 
@@ -84,7 +85,7 @@ INSERT OR IGNORE INTO folders (id, name, icon, sort_order) VALUES
 -- 插入默认标签
 INSERT OR IGNORE INTO tags (id, name, color) VALUES 
   (1, '常用', '#7DD3C0'),
-  (2, '重要', '#9B8DB5'),
+  (2, '重要', '#F59E0B'),
   (3, '待更新', '#D4B070'),
   (4, '游戏', '#C0C8D8'),
   (5, '银行', '#7DB8D3');
@@ -106,6 +107,11 @@ export async function initDatabase(): Promise<Database> {
       await db.execute(m);
     } catch {}
   }
+  // 将仍使用旧默认紫色的“重要”标签迁移为橙色；用户自定义过的颜色保持不变
+  await db.execute(
+    "UPDATE tags SET color = ? WHERE name = ? AND color = ?",
+    ['#F59E0B', '重要', '#9B8DB5']
+  );
   return db;
 }
 
@@ -132,15 +138,18 @@ export async function createFolder(name: string, icon: string = 'Folder', parent
     'INSERT INTO folders (name, icon, parent_id) VALUES (?, ?, ?)',
     [name, icon, parentId]
   );
+  markVaultChanged();
   return Number(result.lastInsertId);
 }
 
 export async function updateFolder(id: number, name: string, icon: string): Promise<void> {
   await getDb().execute('UPDATE folders SET name = ?, icon = ? WHERE id = ?', [name, icon, id]);
+  markVaultChanged();
 }
 
 export async function deleteFolder(id: number): Promise<void> {
   await getDb().execute('DELETE FROM folders WHERE id = ?', [id]);
+  markVaultChanged();
 }
 
 // === Tags ===
@@ -150,11 +159,13 @@ export async function getTags(): Promise<Tag[]> {
 
 export async function createTag(name: string, color: string = '#7DD3C0'): Promise<number> {
   const result = await getDb().execute('INSERT INTO tags (name, color) VALUES (?, ?)', [name, color]);
+  markVaultChanged();
   return Number(result.lastInsertId);
 }
 
 export async function deleteTag(id: number): Promise<void> {
   await getDb().execute('DELETE FROM tags WHERE id = ?', [id]);
+  markVaultChanged();
 }
 
 // === 加解密辅助 ===
@@ -303,6 +314,7 @@ export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []):
     await getDb().execute('INSERT INTO entry_tags (entry_id, tag_id) VALUES (?, ?)', [entryId, tagId]);
   }
 
+  markVaultChanged();
   return entryId;
 }
 
@@ -360,6 +372,7 @@ export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: nu
       await getDb().execute('INSERT INTO entry_tags (entry_id, tag_id) VALUES (?, ?)', [id, tagId]);
     }
   }
+  markVaultChanged();
 }
 
 export async function deleteEntry(id: number): Promise<void> {
@@ -377,10 +390,12 @@ export async function deleteEntry(id: number): Promise<void> {
     }
   }
   await getDb().execute('DELETE FROM entries WHERE id = ?', [id]);
+  markVaultChanged();
 }
 
 export async function toggleFavorite(id: number): Promise<void> {
   await getDb().execute('UPDATE entries SET is_favorite = NOT is_favorite WHERE id = ?', [id]);
+  markVaultChanged();
 }
 
 // === Password History ===
@@ -401,9 +416,11 @@ export async function addAttachment(entryId: number, fileName: string, filePath:
     'INSERT INTO attachments (entry_id, file_name, file_path, file_size) VALUES (?, ?, ?, ?)',
     [entryId, fileName, filePath, fileSize]
   );
+  markVaultChanged();
   return Number(result.lastInsertId);
 }
 
 export async function deleteAttachment(id: number): Promise<void> {
   await getDb().execute('DELETE FROM attachments WHERE id = ?', [id]);
+  markVaultChanged();
 }

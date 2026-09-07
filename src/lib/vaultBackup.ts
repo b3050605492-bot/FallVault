@@ -5,6 +5,7 @@ import { writeFile } from '@tauri-apps/plugin-fs';
 import Database from '@tauri-apps/plugin-sql';
 import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
 import { getDbPath } from './dbPath';
+import { markVaultChanged } from './vaultChange';
 
 const PBKDF2_ITERATIONS = 150_000;
 const SALT_LENGTH = 16;
@@ -368,5 +369,6 @@ async function applyBackupContent(password: string, text: string): Promise<Resto
     }
   }
 
+  if (foldersAdded > 0 || tagsAdded > 0 || newEntries > 0) markVaultChanged();
   return { entries: data.entries.length, folders: data.folders.length, tags: data.tags.length, newEntries, skippedEntries: skipped };
 }

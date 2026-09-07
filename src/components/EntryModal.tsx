@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Star, Eye, EyeOff, History, ImagePlus, Globe, KeyRound, RefreshCw } from 'lucide-react';
+import { X, Save, Star, Eye, EyeOff, History, ImagePlus, Globe, KeyRound, RefreshCw, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useToastStore } from '@/stores/toastStore';
 import { createEntry, updateEntry, getPasswordHistory, getEntryTags, getAttachments, addAttachment, deleteAttachment } from '@/lib/db';
@@ -527,9 +527,16 @@ export function EntryModal() {
 
           {/* 自定义字段 */}
           <div>
-            <label className="text-xs text-[var(--moon-faint)] mb-2 flex items-center justify-between">
+            <div className="mb-2 flex items-center justify-between text-xs text-[var(--moon-faint)]">
               <span>自定义字段</span>
-            </label>
+              <button
+                type="button"
+                onClick={() => setCustomFields((fields) => [...fields, { key: '', value: '', hidden: false }])}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-[var(--moon-dim)] transition-colors hover:bg-[rgba(210,210,220,0.08)] hover:text-[var(--mint)]"
+              >
+                <Plus size={12} /> 添加字段
+              </button>
+            </div>
             {customFields.length > 0 && (
               <div className="space-y-2">
                 {customFields.map((f, i) => (
@@ -540,12 +547,12 @@ export function EntryModal() {
                       <input type={f.hidden ? 'password' : 'text'} value={f.value}
                         onChange={e => { const n = [...customFields]; n[i].value = e.target.value; setCustomFields(n); }}
                         placeholder="值" className="rune-input w-full pl-2.5 pr-8 py-2 text-xs" />
-                      <button onClick={() => { const n = [...customFields]; n[i].hidden = !n[i].hidden; setCustomFields(n); }}
+                      <button type="button" onClick={() => { const n = [...customFields]; n[i].hidden = !n[i].hidden; setCustomFields(n); }}
                         className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[var(--moon-faint)] hover:text-[var(--moon)]" title="隐藏/显示">
                         {f.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
                       </button>
                     </div>
-                    <button onClick={() => setCustomFields(customFields.filter((_, j) => j !== i))}
+                    <button type="button" onClick={() => setCustomFields(customFields.filter((_, j) => j !== i))}
                       className="p-1.5 rounded text-[var(--moon-faint)] hover:text-[var(--danger,#D47070)]" title="删除字段">
                       <Trash2 size={13} />
                     </button>

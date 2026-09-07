@@ -25,6 +25,7 @@ import { stopAutoBackup, startGithubAutoBackup, stopGithubAutoBackup } from '@/l
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { mkdirAll } from '@/lib/rustFs';
+import { requestPendingVaultBackup } from '@/lib/vaultChange';
 
 function App() {
   useDatabase();
@@ -146,6 +147,7 @@ function App() {
   const handleUnlocked = () => {
     setLocked(false);
     useAppStore.getState().refreshAll();
+    requestPendingVaultBackup();
   };
 
   const handleLock = async () => {

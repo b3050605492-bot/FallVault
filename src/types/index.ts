@@ -83,7 +83,8 @@ export interface AppSettings {
   quickOpenHotkey: string;
   githubAutoBackup: {
     enabled: boolean;
-    intervalMin: number; // 备份间隔（分钟）：1/720/1440/2880/5760
+    intervalMin: number; // 两次 GitHub 上传的最短间隔（分钟）：30/60/180/360/720/1440
+    maxBackups: number; // GitHub 仓库保留的最近备份份数
     repo: string; // 选中的仓库 full_name
     tokenLabel: string; // 已保存令牌的 label（令牌本体在 Windows 凭据管理器）
   };

@@ -2,6 +2,14 @@ import { join } from '@tauri-apps/api/path';
 import { getMasterPassword } from '@/lib/crypto';
 import { buildBackupContent, restoreVaultFromContent } from '@/lib/vaultBackup';
 import { useAppStore } from '@/stores/appStore';
+import {
+  clearVaultChangeMarker,
+  getLastGithubBackupAt,
+  getVaultChangeMarker,
+  getVaultChangeTime,
+  setLastGithubBackupAt,
+  VAULT_CHANGED_EVENT,
+} from '@/lib/vaultChange';
 
 // 所有备份相关的文件 IO 走 Rust 命令（std::fs），避免 fs 插件作用域限制
 async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -139,31 +147,148 @@ export function stopAutoBackup() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-// GitHub 自动备份调度器
+// GitHub 自动备份调度器：修改后防抖 3 分钟，并限制两次成功上传的最短间隔；无变化时不上传。
+const GITHUB_CHANGE_DEBOUNCE_MS = 3 * 60 * 1000;
+export const GITHUB_BACKUP_SCHEDULE_EVENT = 'fallvault:github-backup-schedule';
 let ghTimer: ReturnType<typeof setInterval> | null = null;
-export function startGithubAutoBackup(intervalMin: number, onTick?: (ok: boolean) => void): () => void {
-  stopGithubAutoBackup();
-  const ms = Math.max(1, intervalMin) * 60 * 1000;
-  ghTimer = setInterval(async () => {
+let ghDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let ghChangeListener: (() => void) | null = null;
+let ghBackupInFlight: Promise<boolean | null> | null = null;
+let ghIntervalNextAt: number | null = null;
+let ghDebounceNextAt: number | null = null;
+let ghNextBackupAt: number | null = null;
+
+export function getNextGithubBackupAt(): number | null {
+  return ghNextBackupAt;
+}
+
+function refreshGithubBackupSchedule(): void {
+  const cfg = useAppStore.getState().settings.githubAutoBackup;
+  const lastSuccessAt = cfg.repo ? getLastGithubBackupAt(cfg.repo) : null;
+  const minimumNextAt = lastSuccessAt
+    ? lastSuccessAt + cfg.intervalMin * 60 * 1000
+    : 0;
+  const candidates = getVaultChangeMarker()
+    ? [ghDebounceNextAt, ghIntervalNextAt]
+      .filter((value): value is number => value !== null)
+      .map((value) => Math.max(value, minimumNextAt))
+    : [];
+  const nextAt = candidates.length > 0 ? Math.min(...candidates) : null;
+  if (nextAt === ghNextBackupAt) return;
+  ghNextBackupAt = nextAt;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(GITHUB_BACKUP_SCHEDULE_EVENT, { detail: nextAt }));
+  }
+}
+
+async function runGithubAutoBackup(onTick?: (ok: boolean) => void): Promise<boolean | null> {
+  if (ghBackupInFlight) return ghBackupInFlight;
+
+  const task = (async (): Promise<boolean | null> => {
+    const changeMarker = getVaultChangeMarker();
+    if (!changeMarker) return null;
+
     try {
       const cfg = useAppStore.getState().settings.githubAutoBackup;
-      if (!cfg.enabled || !cfg.repo || !cfg.tokenLabel) return;
+      if (!cfg.enabled || !cfg.repo || !cfg.tokenLabel) return null;
+      const changeAt = getVaultChangeTime();
+      if (changeAt && Date.now() < changeAt + GITHUB_CHANGE_DEBOUNCE_MS) return null;
+      const lastSuccessAt = getLastGithubBackupAt(cfg.repo);
+      if (lastSuccessAt && Date.now() < lastSuccessAt + cfg.intervalMin * 60 * 1000) return null;
       const mp = getMasterPassword();
-      if (!mp) return; // 已锁定，跳过
-      if (!isDataDirSet()) return; // 未设置数据文件夹，跳过
+      if (!mp) return null; // 已锁定，保留变化标记，等待下次重试
+      if (!isDataDirSet()) return null; // 未设置数据文件夹，保留变化标记
+
       // 1) 生成本地加密备份
       const made = await createBackup();
-      if (!made) { onTick?.(false); return; }
+      if (!made) {
+        onTick?.(false);
+        return false;
+      }
+
       // 2) 取令牌（Windows 凭据管理器）并上传
       const { invoke: inv } = await import('@tauri-apps/api/core');
       const token = await inv<string>('github_cred_get', { label: cfg.tokenLabel });
       const dataDir = await getDataDir();
-      await inv<string>('github_upload_backup', { token, repo: cfg.repo, dataDir });
+      await inv<string>('github_upload_backup', {
+        token,
+        repo: cfg.repo,
+        dataDir,
+        maxBackups: cfg.maxBackups,
+      });
+
+      setLastGithubBackupAt(cfg.repo);
+      clearVaultChangeMarker(changeMarker);
       onTick?.(true);
-    } catch { onTick?.(false); }
+      return true;
+    } catch {
+      onTick?.(false);
+      return false;
+    }
+  })();
+
+  ghBackupInFlight = task;
+  try {
+    return await task;
+  } finally {
+    if (ghBackupInFlight === task) ghBackupInFlight = null;
+  }
+}
+
+export function startGithubAutoBackup(intervalMin: number, onTick?: (ok: boolean) => void): () => void {
+  stopGithubAutoBackup();
+  const ms = Math.max(1, intervalMin) * 60 * 1000;
+  ghIntervalNextAt = Date.now() + ms;
+
+  const scheduleChangedBackup = () => {
+    if (ghDebounceTimer) clearTimeout(ghDebounceTimer);
+    ghDebounceTimer = null;
+    ghDebounceNextAt = null;
+    if (!getVaultChangeMarker()) {
+      refreshGithubBackupSchedule();
+      return;
+    }
+    const cfg = useAppStore.getState().settings.githubAutoBackup;
+    const changeReadyAt = (getVaultChangeTime() || Date.now()) + GITHUB_CHANGE_DEBOUNCE_MS;
+    const lastSuccessAt = cfg.repo ? getLastGithubBackupAt(cfg.repo) : null;
+    const minimumNextAt = lastSuccessAt
+      ? lastSuccessAt + cfg.intervalMin * 60 * 1000
+      : 0;
+    ghDebounceNextAt = Math.max(Date.now(), changeReadyAt, minimumNextAt);
+    const delay = Math.max(0, ghDebounceNextAt - Date.now());
+    ghDebounceTimer = setTimeout(() => {
+      ghDebounceTimer = null;
+      ghDebounceNextAt = null;
+      refreshGithubBackupSchedule();
+      void runGithubAutoBackup(onTick).finally(refreshGithubBackupSchedule);
+    }, delay);
+    refreshGithubBackupSchedule();
+  };
+
+  ghChangeListener = scheduleChangedBackup;
+  if (typeof window !== 'undefined') {
+    window.addEventListener(VAULT_CHANGED_EVENT, ghChangeListener);
+  }
+
+  // 应用上次退出前仍有未备份修改时，启动后重新安排一次。
+  if (getVaultChangeMarker()) scheduleChangedBackup();
+  else refreshGithubBackupSchedule();
+
+  ghTimer = setInterval(() => {
+    ghIntervalNextAt = Date.now() + ms;
+    refreshGithubBackupSchedule();
+    void runGithubAutoBackup(onTick).finally(refreshGithubBackupSchedule);
   }, ms);
   return stopGithubAutoBackup;
 }
 export function stopGithubAutoBackup() {
   if (ghTimer) { clearInterval(ghTimer); ghTimer = null; }
+  if (ghDebounceTimer) { clearTimeout(ghDebounceTimer); ghDebounceTimer = null; }
+  if (ghChangeListener && typeof window !== 'undefined') {
+    window.removeEventListener(VAULT_CHANGED_EVENT, ghChangeListener);
+  }
+  ghChangeListener = null;
+  ghIntervalNextAt = null;
+  ghDebounceNextAt = null;
+  refreshGithubBackupSchedule();
 }

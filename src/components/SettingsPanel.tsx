@@ -11,7 +11,8 @@ import { getBackgroundsDir } from '@/lib/mediaPaths';
 import { setAutofillHotkey } from '@/lib/autofill';
 import { useToastStore } from '@/stores/toastStore';
 import { useState, useEffect } from 'react';
-import { getDataDir } from '@/lib/backupManager';
+import { GITHUB_BACKUP_SCHEDULE_EVENT, getDataDir, getNextGithubBackupAt } from '@/lib/backupManager';
+import { clearVaultChangeMarker, getVaultChangeMarker, markVaultChanged, setLastGithubBackupAt } from '@/lib/vaultChange';
 
 export function SettingsPanel() {
   const { settings, updateSettings, setIsSettingsOpen, setIsTotpMigrationOpen } = useAppStore();
@@ -32,20 +33,17 @@ export function SettingsPanel() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [integrityChecking, setIntegrityChecking] = useState(false);
   const [activeSection, setActiveSection] = useState<'basic' | 'appearance' | 'github'>('appearance');
-  const [ghToken, setGhToken] = useState('');
   const [ghRepos, setGhRepos] = useState<{ full_name: string }[]>([]);
-  const [ghRepo, setGhRepo] = useState('');
   const [ghBusy, setGhBusy] = useState(false);
   const [ghHelp, setGhHelp] = useState(false);
   const [ghTokens, setGhTokens] = useState<string[]>([]); // 已保存的令牌 label 列表（令牌本身在 Windows 凭据管理器）
   const [ghShowSave, setGhShowSave] = useState(false); // 保存令牌面板开关
-  const [ghTokenOpen, setGhTokenOpen] = useState(false); // 已保存令牌下拉展开
-  const [ghAutoOpen, setGhAutoOpen] = useState(false); // 自动备份配置面板
-  const [ghAutoTokenLabel, setGhAutoTokenLabel] = useState(''); // 自动备份用的令牌 label
-  const [ghAutoRepo, setGhAutoRepo] = useState(''); // 自动备份用的仓库
+  const [ghSelectedTokenLabel, setGhSelectedTokenLabel] = useState(''); // 手动与自动备份共用的令牌 label
+  const [ghSelectedRepo, setGhSelectedRepo] = useState(''); // 手动与自动备份共用的仓库
   const [ghSaveName, setGhSaveName] = useState(''); // 保存时的令牌名字
   const [ghSaveToken, setGhSaveToken] = useState(''); // 保存时的令牌值
   const [ghLastBackup, setGhLastBackup] = useState<{ repo: string; time: string } | null>(null);
+  const [ghNextBackupAt, setGhNextBackupAt] = useState<number | null>(() => getNextGithubBackupAt());
   const [dataDir, setDataDir] = useState<string>('');
   const [capturing, setCapturing] = useState(false);
   const [capturingQuick, setCapturingQuick] = useState(false); // 快速打开热键捕获
@@ -157,6 +155,7 @@ export function SettingsPanel() {
       await invoke('open_folder', { path });
     } catch (e) {
       console.error('open folder failed', e);
+      addToast(isEn ? 'Unable to open folder; check whether the path exists' : '无法打开文件夹，请检查路径是否存在', 'error');
     }
   };
 
@@ -175,10 +174,25 @@ export function SettingsPanel() {
         if (idx.lastBackup) setGhLastBackup(idx.lastBackup);
       } catch { /* 忽略：首次无索引 */ }
     })();
+    const cfg = useAppStore.getState().settings.githubAutoBackup;
+    setGhSelectedTokenLabel(cfg.tokenLabel || '');
+    setGhSelectedRepo(cfg.repo || '');
+  }, []);
+  useEffect(() => {
+    const updateNextBackup = (event: Event) => {
+      const nextAt = (event as CustomEvent<number | null>).detail;
+      setGhNextBackupAt(typeof nextAt === 'number' ? nextAt : null);
+    };
+    setGhNextBackupAt(getNextGithubBackupAt());
+    window.addEventListener(GITHUB_BACKUP_SCHEDULE_EVENT, updateNextBackup);
+    return () => window.removeEventListener(GITHUB_BACKUP_SCHEDULE_EVENT, updateNextBackup);
   }, []);
   // 持久化索引到本地（不含令牌本身）
-  const persistGhIndex = async () => {
-    const idx = JSON.stringify({ tokens: ghTokens, lastBackup: ghLastBackup });
+  const persistGhIndex = async (
+    nextTokens = ghTokens,
+    nextLastBackup: { repo: string; time: string } | null = ghLastBackup,
+  ) => {
+    const idx = JSON.stringify({ tokens: nextTokens, lastBackup: nextLastBackup });
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('github_save_index', { json: idx });
@@ -970,189 +984,21 @@ export function SettingsPanel() {
               : '把本地加密的 .fvault 备份同步到你的 GitHub 私有仓库。主密码绝不会上传，只同步已加密的文件。'}
           </p>
 
-          {/* GitHub 自动备份 */}
+          {/* GitHub 连接配置：自动备份与手动操作共用 */}
           <div className="mb-4 p-3 rounded-2xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.07)]">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-[var(--moon)]">{isEn ? 'Auto backup to GitHub' : 'GitHub 自动备份'}</span>
-              <button
-                onClick={() => {
-                  const cur = useAppStore.getState().settings.githubAutoBackup;
-                  useAppStore.getState().updateSettings({ githubAutoBackup: { ...cur, enabled: !cur.enabled } });
-                }}
-                className={`relative w-11 h-6 rounded-full transition-all ${useAppStore.getState().settings.githubAutoBackup.enabled ? 'bg-[var(--mint)]' : 'bg-[rgba(255,255,255,0.12)]'}`}
-                title={isEn ? 'Toggle auto backup' : '开关自动备份'}
-              >
-                <span className={`absolute top-0.5 ${useAppStore.getState().settings.githubAutoBackup.enabled ? 'left-[22px]' : 'left-0.5'} w-5 h-5 rounded-full bg-white transition-all`} />
-              </button>
+            <div className="flex items-center gap-2 mb-3">
+              <KeyRound size={14} className="text-[var(--mint)]" />
+              <span className="text-xs font-medium text-[var(--moon)]">{isEn ? 'GitHub connection' : 'GitHub 连接配置'}</span>
             </div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs text-[var(--moon-faint)]">{isEn ? 'Interval' : '备份间隔'}</span>
-              <select
-                value={useAppStore.getState().settings.githubAutoBackup.intervalMin}
-                onChange={(e) => {
-                  const cur = useAppStore.getState().settings.githubAutoBackup;
-                  useAppStore.getState().updateSettings({ githubAutoBackup: { ...cur, intervalMin: Number(e.target.value) } });
-                }}
-                className="rune-input flex-1 px-3 py-2 text-sm bg-transparent"
-              >
-                <option value={1} style={{ background: '#1A1A2E' }}>{isEn ? '1 minute (test)' : '1 分钟（测试）'}</option>
-                <option value={720} style={{ background: '#1A1A2E' }}>{isEn ? '12 hours' : '12 小时'}</option>
-                <option value={1440} style={{ background: '#1A1A2E' }}>{isEn ? '24 hours' : '24 小时'}</option>
-                <option value={2880} style={{ background: '#1A1A2E' }}>{isEn ? '48 hours' : '48 小时'}</option>
-                <option value={5760} style={{ background: '#1A1A2E' }}>{isEn ? '96 hours' : '96 小时'}</option>
-              </select>
-            </div>
+
             <button
-              onClick={() => setGhAutoOpen((v) => !v)}
+              onClick={() => { setGhShowSave((value) => !value); setGhSaveName(''); setGhSaveToken(''); }}
               className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all mb-2"
             >
-              {isEn ? 'Configure token & repo' : '配置令牌与仓库'}
-            </button>
-            {(() => {
-              const cfg = useAppStore.getState().settings.githubAutoBackup;
-              return cfg.repo
-                ? <div className="text-[11px] text-[var(--moon-dim)] mb-1">{isEn ? `Target repo: ${cfg.repo}` : `目标仓库：${cfg.repo}`}</div>
-                : <div className="text-[11px] text-[var(--moon-faint)] mb-1">{isEn ? 'Not configured yet' : '尚未配置仓库'}</div>;
-            })()}
-            {ghAutoOpen && (
-              <div className="mt-2 p-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] space-y-2">
-                {/* 选已保存令牌 */}
-                <div>
-                  <label className="text-[11px] text-[var(--moon-faint)] mb-1 block">{isEn ? 'Token (pick a saved one)' : '令牌（选一个已保存的）'}</label>
-                  {ghTokens.length === 0 ? (
-                    <div className="text-[11px] text-[var(--moon-faint)]">{isEn ? 'Save a token first via "+ Save token" above' : '请先点上方「+ 保存令牌」保存一个令牌'}</div>
-                  ) : (
-                    <select
-                      value={ghAutoTokenLabel}
-                      onChange={(e) => setGhAutoTokenLabel(e.target.value)}
-                      className="rune-input w-full px-3 py-2 text-sm bg-transparent"
-                    >
-                      <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— select token —' : '— 选择令牌 —'}</option>
-                      {ghTokens.map((t) => <option key={t} value={t} style={{ background: '#1A1A2E' }}>{t}</option>)}
-                    </select>
-                  )}
-                </div>
-                {/* 获取仓库 */}
-                <button
-                  onClick={async () => {
-                    if (!ghAutoTokenLabel) { addToast(isEn ? 'Pick a token first' : '请先选令牌', 'warning'); return; }
-                    try {
-                      const { invoke } = await import('@tauri-apps/api/core');
-                      const tok = await invoke<string>('github_cred_get', { label: ghAutoTokenLabel });
-                      const repos = await invoke<{ full_name: string }[]>('github_list_repos', { token: tok });
-                      setGhRepos(repos);
-                      addToast(isEn ? `Found ${repos.length} repos` : `找到 ${repos.length} 个仓库`, 'success');
-                    } catch (e: any) { addToast(isEn ? `Failed: ${String(e)}` : `失败：${String(e)}`, 'error'); }
-                  }}
-                  className="w-full text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.1)] text-[var(--moon-dim)] hover:bg-[rgba(210,210,220,0.18)] transition-all"
-                >
-                  {isEn ? 'List my repositories' : '获取我的仓库'}
-                </button>
-                {ghRepos.length > 0 && (
-                  <select
-                    value={ghAutoRepo}
-                    onChange={(e) => setGhAutoRepo(e.target.value)}
-                    className="rune-input w-full px-3 py-2 text-sm bg-transparent"
-                  >
-                    <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— choose repo —' : '— 请选择仓库 —'}</option>
-                    {ghRepos.map((r) => <option key={r.full_name} value={r.full_name} style={{ background: '#1A1A2E' }}>{r.full_name}</option>)}
-                  </select>
-                )}
-                {ghAutoRepo && (
-                  <div className="text-[11px] text-[var(--mint)]">{isEn ? `Selected: ${ghAutoRepo}` : `已选仓库：${ghAutoRepo}`}</div>
-                )}
-                <button
-                  onClick={() => {
-                    if (!ghAutoTokenLabel || !ghAutoRepo) { addToast(isEn ? 'Pick token and repo' : '请选令牌和仓库', 'warning'); return; }
-                    const cur = useAppStore.getState().settings.githubAutoBackup;
-                    useAppStore.getState().updateSettings({ githubAutoBackup: { ...cur, tokenLabel: ghAutoTokenLabel, repo: ghAutoRepo } });
-                    setGhAutoOpen(false);
-                    addToast(isEn ? 'Auto backup configured' : '已配置自动备份', 'success');
-                  }}
-                  className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.15)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.25)] transition-all"
-                >
-                  {isEn ? 'Save config' : '保存配置'}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* 已保存令牌：仅在下拉里显示，点开才列出（每条带 × 删除） */}
-          <label className="text-xs text-[var(--moon-faint)] mb-1.5 block">{isEn ? 'GitHub Token (PAT)' : 'GitHub 令牌（PAT）'}</label>
-          <input
-            type="password"
-            value={ghToken}
-            onChange={(e) => setGhToken(e.target.value)}
-            placeholder={isEn ? 'ghp_xxx or github_pat_xxx' : 'ghp_xxx 或 github_pat_xxx'}
-            className="rune-input w-full px-3 py-2.5 text-sm bg-transparent mb-2"
-          />
-          {ghTokens.length > 0 && (
-            <div className="relative mb-2">
-              <button
-                onClick={() => setGhTokenOpen((v) => !v)}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-xs text-[var(--moon-dim)] hover:border-[rgba(255,255,255,0.15)] transition-all"
-              >
-                <span>{isEn ? 'Saved tokens' : '已保存的令牌'}</span>
-                <span className="text-[var(--moon-faint)]">{ghTokenOpen ? '▲' : '▼'}</span>
-              </button>
-              {ghTokenOpen && (
-                <div className="absolute z-20 left-0 right-0 mt-1 p-1.5 rounded-xl bg-[#16162a] border border-[rgba(255,255,255,0.1)] shadow-xl space-y-1 max-h-52 overflow-auto">
-                  {ghTokens.map((t) => (
-                    <div
-                      key={t}
-                      className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
-                    >
-                      <button
-                        onClick={async () => {
-                          try {
-                            const { invoke } = await import('@tauri-apps/api/core');
-                            const tok = await invoke<string>('github_cred_get', { label: t });
-                            setGhToken(tok);
-                            setGhTokenOpen(false);
-                            addToast(isEn ? `Loaded token "${t}"` : `已载入令牌「${t}」`, 'success');
-                          } catch (err: any) {
-                            addToast(isEn ? `Load failed: ${String(err)}` : `载入失败：${String(err)}`, 'error');
-                          }
-                        }}
-                        className="flex-1 text-left text-sm text-[var(--moon-dim)] truncate hover:text-[var(--moon)]"
-                        title={t}
-                      >
-                        {t}
-                      </button>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const { invoke } = await import('@tauri-apps/api/core');
-                            await invoke('github_cred_delete', { label: t });
-                            setGhTokens((prev) => prev.filter((x) => x !== t));
-                            await persistGhIndex();
-                            addToast(isEn ? `Deleted token "${t}"` : `已删除令牌「${t}」`, 'info');
-                          } catch (err: any) {
-                            addToast(isEn ? `Delete failed: ${String(err)}` : `删除失败：${String(err)}`, 'error');
-                          }
-                        }}
-                        className="shrink-0 w-6 h-6 flex items-center justify-center rounded-lg text-[var(--moon-faint)] hover:text-[var(--danger)] hover:bg-[rgba(255,90,90,0.12)] transition-all"
-                        title={isEn ? 'Delete this token' : '删除该令牌'}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 保存令牌：点开一个小面板，输入名字+令牌后保存 */}
-          <div className="mb-3">
-            <button
-              onClick={() => { setGhShowSave((v) => !v); setGhSaveName(''); setGhSaveToken(''); }}
-              className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all"
-            >
-              {isEn ? '+ Save token' : '+ 保存令牌'}
+              {isEn ? '+ Add token' : '+ 添加令牌'}
             </button>
             {ghShowSave && (
-              <div className="mt-2 p-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] space-y-2">
+              <div className="mb-2 p-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] space-y-2">
                 <input
                   type="text"
                   value={ghSaveName}
@@ -1174,123 +1020,300 @@ export function SettingsPanel() {
                     try {
                       const { invoke } = await import('@tauri-apps/api/core');
                       await invoke('github_cred_save', { label, token: ghSaveToken.trim() });
-                      setGhTokens((prev) => (prev.includes(label) ? prev : [...prev, label]));
-                      await persistGhIndex();
-                      setGhToken(ghSaveToken.trim());
-                      setGhSaveName(''); setGhSaveToken(''); setGhShowSave(false);
+                      const nextTokens = ghTokens.includes(label) ? ghTokens : [...ghTokens, label];
+                      setGhTokens(nextTokens);
+                      await persistGhIndex(nextTokens);
+                      setGhSelectedTokenLabel(label);
+                      setGhSelectedRepo('');
+                      setGhRepos([]);
+                      setGhSaveName('');
+                      setGhSaveToken('');
+                      setGhShowSave(false);
                       addToast(isEn ? `Saved token "${label}"` : `已保存令牌「${label}」（存于系统凭据管理器）`, 'success');
-                    } catch (err: any) {
-                      addToast(isEn ? `Save failed: ${String(err)}` : `保存失败：${String(err)}`, 'error');
+                    } catch (e: any) {
+                      addToast(isEn ? `Save failed: ${String(e)}` : `保存失败：${String(e)}`, 'error');
                     }
                   }}
                   className="w-full text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.15)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.25)] transition-all"
                 >
-                  {isEn ? 'Save' : '保存'}
+                  {isEn ? 'Save token' : '保存令牌'}
                 </button>
+              </div>
+            )}
+
+            <div className="flex gap-2 mb-2">
+              <select
+                value={ghSelectedTokenLabel}
+                onChange={(e) => {
+                  const label = e.target.value;
+                  const cfg = useAppStore.getState().settings.githubAutoBackup;
+                  setGhSelectedTokenLabel(label);
+                  setGhRepos([]);
+                  setGhSelectedRepo(label === cfg.tokenLabel ? cfg.repo : '');
+                }}
+                className="rune-input flex-1 min-w-0 px-3 py-2 text-sm bg-transparent"
+              >
+                <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— select a saved token —' : '— 选择已保存令牌 —'}</option>
+                {ghSelectedTokenLabel && !ghTokens.includes(ghSelectedTokenLabel) && (
+                  <option value={ghSelectedTokenLabel} style={{ background: '#1A1A2E' }}>{ghSelectedTokenLabel}</option>
+                )}
+                {ghTokens.map((tokenLabel) => (
+                  <option key={tokenLabel} value={tokenLabel} style={{ background: '#1A1A2E' }}>{tokenLabel}</option>
+                ))}
+              </select>
+              <button
+                onClick={async () => {
+                  if (!ghSelectedTokenLabel) return;
+                  const label = ghSelectedTokenLabel;
+                  try {
+                    const { invoke } = await import('@tauri-apps/api/core');
+                    await invoke('github_cred_delete', { label });
+                    const nextTokens = ghTokens.filter((item) => item !== label);
+                    setGhTokens(nextTokens);
+                    await persistGhIndex(nextTokens);
+                    setGhSelectedTokenLabel('');
+                    setGhSelectedRepo('');
+                    setGhRepos([]);
+                    const cfg = useAppStore.getState().settings.githubAutoBackup;
+                    if (cfg.tokenLabel === label) {
+                      updateSettings({ githubAutoBackup: { ...cfg, enabled: false, tokenLabel: '', repo: '' } });
+                    }
+                    addToast(isEn ? `Deleted token "${label}"` : `已删除令牌「${label}」`, 'info');
+                  } catch (e: any) {
+                    addToast(isEn ? `Delete failed: ${String(e)}` : `删除失败：${String(e)}`, 'error');
+                  }
+                }}
+                disabled={!ghSelectedTokenLabel}
+                className="shrink-0 px-3 py-2 rounded-xl bg-[rgba(255,90,90,0.08)] text-[var(--danger)] hover:bg-[rgba(255,90,90,0.15)] transition-all disabled:opacity-30"
+                title={isEn ? 'Delete selected token' : '删除所选令牌'}
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <button
+              onClick={async () => {
+                if (!ghSelectedTokenLabel) { addToast(isEn ? 'Select or add a token first' : '请先选择或添加令牌', 'warning'); return; }
+                setGhBusy(true);
+                try {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  const token = await invoke<string>('github_cred_get', { label: ghSelectedTokenLabel });
+                  const repos = await invoke<{ full_name: string }[]>('github_list_repos', { token });
+                  setGhRepos(repos);
+                  setGhSelectedRepo((current) => repos.some((repo) => repo.full_name === current) ? current : '');
+                  addToast(isEn ? `Found ${repos.length} repos` : `找到 ${repos.length} 个仓库`, 'success');
+                } catch (e: any) {
+                  addToast(isEn ? `Failed: ${String(e)}` : `失败：${String(e)}`, 'error');
+                } finally {
+                  setGhBusy(false);
+                }
+              }}
+              disabled={ghBusy || !ghSelectedTokenLabel}
+              className="w-full text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.1)] text-[var(--moon-dim)] hover:bg-[rgba(210,210,220,0.18)] transition-all disabled:opacity-40 mb-2"
+            >
+              {ghBusy ? (isEn ? 'Loading…' : '获取中…') : (isEn ? 'List my repositories' : '获取我的仓库')}
+            </button>
+
+            {(ghRepos.length > 0 || ghSelectedRepo) && (
+              <select
+                value={ghSelectedRepo}
+                onChange={(e) => {
+                  const repo = e.target.value;
+                  setGhSelectedRepo(repo);
+                  if (!repo || !ghSelectedTokenLabel) return;
+                  const cfg = useAppStore.getState().settings.githubAutoBackup;
+                  updateSettings({ githubAutoBackup: { ...cfg, tokenLabel: ghSelectedTokenLabel, repo } });
+                  markVaultChanged(); // 新连接需要先同步一次现有保险库
+                  addToast(isEn ? 'GitHub connection saved' : 'GitHub 连接配置已保存', 'success');
+                }}
+                className="rune-input w-full px-3 py-2.5 text-sm bg-transparent mb-2"
+              >
+                <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— choose repository —' : '— 选择仓库（选择后自动保存）—'}</option>
+                {ghSelectedRepo && !ghRepos.some((repo) => repo.full_name === ghSelectedRepo) && (
+                  <option value={ghSelectedRepo} style={{ background: '#1A1A2E' }}>{ghSelectedRepo}</option>
+                )}
+                {ghRepos.map((repo) => (
+                  <option key={repo.full_name} value={repo.full_name} style={{ background: '#1A1A2E' }}>{repo.full_name}</option>
+                ))}
+              </select>
+            )}
+
+            {settings.githubAutoBackup.repo && settings.githubAutoBackup.tokenLabel ? (
+              <div className="text-[11px] text-[var(--mint)]">
+                {isEn
+                  ? `Connected: ${settings.githubAutoBackup.tokenLabel} → ${settings.githubAutoBackup.repo}`
+                  : `当前连接：${settings.githubAutoBackup.tokenLabel} → ${settings.githubAutoBackup.repo}`}
+              </div>
+            ) : (
+              <div className="text-[11px] text-[var(--moon-faint)]">
+                {isEn ? 'Add a token, list repositories, then select one.' : '添加令牌并获取仓库后，选择一个仓库即可完成配置。'}
               </div>
             )}
           </div>
 
-          <button
-            onClick={async () => {
-              if (!ghToken.trim()) { addToast(isEn ? 'Enter a token first' : '请先填写令牌', 'warning'); return; }
-              setGhBusy(true);
-              try {
-                const { invoke } = await import('@tauri-apps/api/core');
-                const repos = await invoke<{ full_name: string }[]>('github_list_repos', { token: ghToken.trim() });
-                setGhRepos(repos);
-                addToast(isEn ? `Found ${repos.length} repos` : `找到 ${repos.length} 个仓库`, 'success');
-              } catch (e: any) {
-                addToast(isEn ? `Failed: ${String(e)}` : `失败：${String(e)}`, 'error');
-              } finally { setGhBusy(false); }
-            }}
-            disabled={ghBusy}
-            className="w-full text-xs px-3 py-2 rounded-xl bg-[rgba(210,210,220,0.12)] text-[var(--mint)] hover:bg-[rgba(210,210,220,0.2)] transition-all disabled:opacity-50 mb-3"
-          >
-            {ghBusy ? (isEn ? 'Loading…' : '获取中…') : (isEn ? 'List my repositories' : '获取我的仓库')}
-          </button>
-
-          {ghRepos.length > 0 && (
-            <div className="mb-3">
-              <label className="text-xs text-[var(--moon-faint)] mb-1.5 block">{isEn ? 'Select repository' : '选择仓库'}</label>
-              <select
-                value={ghRepo}
-                onChange={(e) => setGhRepo(e.target.value)}
-                className="rune-input w-full px-3 py-2.5 text-sm bg-transparent"
+          {/* GitHub 自动备份 */}
+          <div className="mb-4 p-3 rounded-2xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.07)]">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Timer size={14} className="text-[var(--mint)]" />
+                <span className="text-xs font-medium text-[var(--moon)]">{isEn ? 'Auto backup' : '自动备份'}</span>
+              </div>
+              <button
+                onClick={() => {
+                  const cfg = useAppStore.getState().settings.githubAutoBackup;
+                  if (!cfg.enabled && (!cfg.tokenLabel || !cfg.repo)) {
+                    addToast(isEn ? 'Configure the GitHub connection first' : '请先完成 GitHub 连接配置', 'warning');
+                    return;
+                  }
+                  const enabled = !cfg.enabled;
+                  updateSettings({ githubAutoBackup: { ...cfg, enabled } });
+                  if (enabled) markVaultChanged(); // 开启后安排首次同步
+                }}
+                className={`relative w-11 h-6 rounded-full transition-all ${settings.githubAutoBackup.enabled ? 'bg-[var(--mint)]' : 'bg-[rgba(255,255,255,0.12)]'}`}
+                title={isEn ? 'Toggle auto backup' : '开关自动备份'}
               >
-                <option value="" style={{ background: '#1A1A2E' }}>{isEn ? '— choose —' : '— 请选择 —'}</option>
-                {ghRepos.map((r) => <option key={r.full_name} value={r.full_name} style={{ background: '#1A1A2E' }}>{r.full_name}</option>)}
+                <span className={`absolute top-0.5 ${settings.githubAutoBackup.enabled ? 'left-[22px]' : 'left-0.5'} w-5 h-5 rounded-full bg-white transition-all`} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[var(--moon-faint)]">{isEn ? 'Interval' : '备份间隔'}</span>
+              <select
+                value={settings.githubAutoBackup.intervalMin}
+                onChange={(e) => {
+                  const cfg = useAppStore.getState().settings.githubAutoBackup;
+                  updateSettings({ githubAutoBackup: { ...cfg, intervalMin: Number(e.target.value) } });
+                }}
+                className="rune-input flex-1 px-3 py-2 text-sm bg-transparent"
+              >
+                <option value={30} style={{ background: '#1A1A2E' }}>{isEn ? '30 minutes' : '30 分钟'}</option>
+                <option value={60} style={{ background: '#1A1A2E' }}>{isEn ? '1 hour' : '1 小时'}</option>
+                <option value={180} style={{ background: '#1A1A2E' }}>{isEn ? '3 hours' : '3 小时'}</option>
+                <option value={360} style={{ background: '#1A1A2E' }}>{isEn ? '6 hours' : '6 小时'}</option>
+                <option value={720} style={{ background: '#1A1A2E' }}>{isEn ? '12 hours' : '12 小时'}</option>
+                <option value={1440} style={{ background: '#1A1A2E' }}>{isEn ? '24 hours' : '24 小时'}</option>
               </select>
             </div>
-          )}
-
-          {/* 上次备份时间 */}
-          {ghLastBackup && (
-            <div className="mb-3 text-[11px] text-[var(--moon-faint)]">
-              {isEn
-                ? `Last backup: ${ghLastBackup.repo} @ ${ghLastBackup.time}`
-                : `上次备份：${ghLastBackup.repo} · ${ghLastBackup.time}`}
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-[var(--moon-faint)]">{isEn ? 'Keep' : '保留份数'}</span>
+              <select
+                value={settings.githubAutoBackup.maxBackups}
+                onChange={(e) => {
+                  const cfg = useAppStore.getState().settings.githubAutoBackup;
+                  updateSettings({ githubAutoBackup: { ...cfg, maxBackups: Number(e.target.value) } });
+                }}
+                className="rune-input flex-1 px-3 py-2 text-sm bg-transparent"
+              >
+                {[5, 10, 20, 30, 50].map((count) => (
+                  <option key={count} value={count} style={{ background: '#1A1A2E' }}>
+                    {isEn ? `${count} backups` : `${count} 份`}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
+            <div className="mt-2 text-[11px] text-[var(--moon-dim)]">
+              {isEn
+                ? `Changes settle for 3 minutes. Uploads are at least one selected interval apart; unchanged vaults are skipped. The latest ${settings.githubAutoBackup.maxBackups} backups are kept.`
+                : `修改后等待 3 分钟；两次上传至少间隔所选时长，无变化会跳过。GitHub 保留最近 ${settings.githubAutoBackup.maxBackups} 份。`}
+            </div>
+            <div className="mt-2 rounded-xl bg-[rgba(125,211,192,0.07)] px-3 py-2 text-xs text-[var(--moon-dim)]">
+              <span>{isEn ? 'Next backup: ' : '下次备份：'}</span>
+              <span className="font-medium text-[var(--moon)]">
+                {!settings.githubAutoBackup.enabled
+                  ? (isEn ? 'Auto backup is off' : '自动备份未开启')
+                  : ghNextBackupAt
+                    ? new Date(ghNextBackupAt).toLocaleString(isEn ? 'en-US' : 'zh-CN')
+                    : (isEn ? 'Waiting for vault changes' : '等待数据变化')}
+              </span>
+            </div>
+          </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={async () => {
-                if (!ghToken.trim() || !ghRepo) { addToast(isEn ? 'Token and repo required' : '请先填令牌并选仓库', 'warning'); return; }
-                if (!dataDir) { addToast(isEn ? 'Set data folder first' : '请先设置数据文件夹', 'warning'); return; }
-                setGhBusy(true);
-                try {
-                  // 先直接基于当前保险库生成一份加密备份（不依赖本地已有文件）
-                  const { createBackup } = await import('@/lib/backupManager');
-                  const made = await createBackup();
-                  if (!made) { addToast(isEn ? 'Failed to build backup (unlocked?)' : '生成备份失败（请确认已解锁）', 'warning'); setGhBusy(false); return; }
-                  const { invoke } = await import('@tauri-apps/api/core');
-                  const msg = await invoke<string>('github_upload_backup', { token: ghToken.trim(), repo: ghRepo, dataDir });
-                  setGhLastBackup({ repo: ghRepo, time: new Date().toLocaleString() });
-                  await persistGhIndex();
-                  addToast(msg, 'success');
-                } catch (e: any) {
-                  addToast(isEn ? `Backup failed: ${String(e)}` : `备份失败：${String(e)}`, 'error');
-                } finally { setGhBusy(false); }
-              }}
-              disabled={ghBusy}
-              className="flex-1 text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
-            >
-              <Save size={13} /> {isEn ? 'Backup to repo' : '备份文件'}
-            </button>
-            <button
-              onClick={async () => {
-                if (!ghToken.trim() || !ghRepo) { addToast(isEn ? 'Token and repo required' : '请先填令牌并选仓库', 'warning'); return; }
-                setGhBusy(true);
-                try {
-                  const { invoke } = await import('@tauri-apps/api/core');
-                  const { open } = await import('@tauri-apps/plugin-dialog');
-                  const res = await invoke<{ files: { filename: string; content: string }[] }>('github_download_backup', { token: ghToken.trim(), repo: ghRepo });
-                  if (!res.files || res.files.length === 0) { addToast(isEn ? 'No backups found' : '仓库里没有备份', 'warning'); setGhBusy(false); return; }
-                  // 让用户选一个文件夹，把所有备份写进去
-                  const dir = await open({ directory: true, title: isEn ? 'Select folder to save all backups' : '选择保存所有备份的文件夹' });
-                  if (!dir || typeof dir !== 'string') { addToast(isEn ? 'Cancelled' : '已取消保存', 'info'); setGhBusy(false); return; }
-                  const { writeFile, mkdir } = await import('@tauri-apps/plugin-fs');
-                  const { join } = await import('@tauri-apps/api/path');
-                  await mkdir(dir, { recursive: true });
-                  let ok = 0;
-                  for (const f of res.files) {
-                    // Windows 文件名不允许冒号，落地时把 : 换成 -
-                    const safeName = f.filename.replace(/:/g, '-');
-                    const bin = Uint8Array.from(atob(f.content), (c) => c.charCodeAt(0));
-                    await writeFile(await join(dir, safeName), bin);
-                    ok++;
-                  }
-                  addToast((isEn ? `Saved ${ok} backups to ` : `已保存 ${ok} 个备份到 `) + dir, 'success');
-                } catch (e: any) {
-                  addToast(isEn ? `Download failed: ${String(e)}` : `下载失败：${String(e)}`, 'error');
-                } finally { setGhBusy(false); }
-              }}
-              disabled={ghBusy}
-              className="flex-1 text-xs px-3 py-2.5 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
-            >
-              <Github size={13} /> {isEn ? 'Download' : '下载备份'}
-            </button>
+          {/* 手动备份与恢复 */}
+          <div className="p-3 rounded-2xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.07)]">
+            <div className="flex items-center gap-2 mb-3">
+              <Save size={14} className="text-[var(--mint)]" />
+              <span className="text-xs font-medium text-[var(--moon)]">{isEn ? 'Manual operations' : '手动操作'}</span>
+            </div>
+
+            {ghLastBackup && (
+              <div className="mb-3 text-xs font-medium text-[var(--moon-dim)]">
+                {isEn
+                  ? `Last backup: ${ghLastBackup.repo} @ ${ghLastBackup.time}`
+                  : `上次备份：${ghLastBackup.repo} · ${ghLastBackup.time}`}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  const cfg = useAppStore.getState().settings.githubAutoBackup;
+                  if (!cfg.tokenLabel || !cfg.repo) { addToast(isEn ? 'Configure the GitHub connection first' : '请先完成 GitHub 连接配置', 'warning'); return; }
+                  if (!dataDir) { addToast(isEn ? 'Set data folder first' : '请先设置数据文件夹', 'warning'); return; }
+                  const changeMarker = getVaultChangeMarker();
+                  setGhBusy(true);
+                  try {
+                    // 先直接基于当前保险库生成一份加密备份（不依赖本地已有文件）
+                    const { createBackup } = await import('@/lib/backupManager');
+                    const made = await createBackup();
+                    if (!made) { addToast(isEn ? 'Failed to build backup (unlocked?)' : '生成备份失败（请确认已解锁）', 'warning'); return; }
+                    const { invoke } = await import('@tauri-apps/api/core');
+                    const token = await invoke<string>('github_cred_get', { label: cfg.tokenLabel });
+                    const msg = await invoke<string>('github_upload_backup', {
+                      token,
+                      repo: cfg.repo,
+                      dataDir,
+                      maxBackups: cfg.maxBackups,
+                    });
+                    const nextLastBackup = { repo: cfg.repo, time: new Date().toLocaleString() };
+                    setGhLastBackup(nextLastBackup);
+                    await persistGhIndex(ghTokens, nextLastBackup);
+                    setLastGithubBackupAt(cfg.repo);
+                    clearVaultChangeMarker(changeMarker);
+                    addToast(msg, 'success');
+                  } catch (e: any) {
+                    addToast(isEn ? `Backup failed: ${String(e)}` : `备份失败：${String(e)}`, 'error');
+                  } finally { setGhBusy(false); }
+                }}
+                disabled={ghBusy || !settings.githubAutoBackup.tokenLabel || !settings.githubAutoBackup.repo}
+                className="flex-1 text-xs px-3 py-2.5 rounded-xl bg-[rgba(125,211,192,0.12)] text-[var(--mint)] hover:bg-[rgba(125,211,192,0.2)] transition-all disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                <Save size={13} /> {isEn ? 'Back up now' : '立即备份'}
+              </button>
+              <button
+                onClick={async () => {
+                  const cfg = useAppStore.getState().settings.githubAutoBackup;
+                  if (!cfg.tokenLabel || !cfg.repo) { addToast(isEn ? 'Configure the GitHub connection first' : '请先完成 GitHub 连接配置', 'warning'); return; }
+                  setGhBusy(true);
+                  try {
+                    const { invoke } = await import('@tauri-apps/api/core');
+                    const token = await invoke<string>('github_cred_get', { label: cfg.tokenLabel });
+                    const { open } = await import('@tauri-apps/plugin-dialog');
+                    const res = await invoke<{ files: { filename: string; content: string }[] }>('github_download_backup', { token, repo: cfg.repo });
+                    if (!res.files || res.files.length === 0) { addToast(isEn ? 'No backups found' : '仓库里没有备份', 'warning'); return; }
+                    // 让用户选一个文件夹，把所有备份写进去
+                    const dir = await open({ directory: true, title: isEn ? 'Select folder to save all backups' : '选择保存所有备份的文件夹' });
+                    if (!dir || typeof dir !== 'string') { addToast(isEn ? 'Cancelled' : '已取消保存', 'info'); return; }
+                    const { writeFile, mkdir } = await import('@tauri-apps/plugin-fs');
+                    const { join } = await import('@tauri-apps/api/path');
+                    await mkdir(dir, { recursive: true });
+                    let ok = 0;
+                    for (const file of res.files) {
+                      // Windows 文件名不允许冒号，落地时把 : 换成 -
+                      const safeName = file.filename.replace(/:/g, '-');
+                      const bin = Uint8Array.from(atob(file.content), (char) => char.charCodeAt(0));
+                      await writeFile(await join(dir, safeName), bin);
+                      ok++;
+                    }
+                    addToast((isEn ? `Saved ${ok} backups to ` : `已保存 ${ok} 个备份到 `) + dir, 'success');
+                  } catch (e: any) {
+                    addToast(isEn ? `Download failed: ${String(e)}` : `下载失败：${String(e)}`, 'error');
+                  } finally { setGhBusy(false); }
+                }}
+                disabled={ghBusy || !settings.githubAutoBackup.tokenLabel || !settings.githubAutoBackup.repo}
+                className="flex-1 text-xs px-3 py-2.5 rounded-xl bg-[rgba(192,200,216,0.08)] text-[var(--moon-dim)] hover:bg-[rgba(192,200,216,0.15)] transition-all disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                <Github size={13} /> {isEn ? 'Download backups' : '下载备份'}
+              </button>
+            </div>
           </div>
         </>)}
 
@@ -1338,9 +1361,9 @@ export function SettingsPanel() {
               <section>
                 <h3 className="text-sm font-semibold text-[var(--moon)] mb-2">{isEn ? 'Step 3 · Use in FallVault' : '第三步 · 在 FallVault 里用'}</h3>
                 <ol className="space-y-1.5 list-decimal pl-5">
-                  <li>{isEn ? 'Click "+ Save token", enter a name + paste the token, then "Save" (stored in Windows Credential Manager, not uploaded). Pick a saved token from the dropdown above to autofill.' : '点「+ 保存令牌」，输入名字并把令牌粘贴进去，再点「保存」（存在 Windows 凭据管理器，不会上传）。上方下拉选已保存令牌可自动填充。'}</li>
-                  <li>{isEn ? 'Click "List my repositories", then pick your private repo from the dropdown.' : '点「获取我的仓库」，在下拉里选你的私有仓库。'}</li>
-                  <li>{isEn ? 'Click "Backup to repo" to create an encrypted .fvault from your current vault and push it (timestamped filename). "Download" pulls the latest one back.' : '点「备份文件」会基于当前保险库直接生成加密 .fvault 并上传（文件名带时间）；「下载备份」拉回最新一份。'}</li>
+                  <li>{isEn ? 'Under "GitHub connection", click "+ Add token", enter a name and paste the PAT, then save it. The token stays in Windows Credential Manager.' : '在「GitHub 连接配置」中点「+ 添加令牌」，输入名称并粘贴 PAT 后保存。令牌只存入 Windows 凭据管理器。'}</li>
+                  <li>{isEn ? 'Select the saved token, list your repositories, then select the private backup repo. The selection is saved automatically and shared by auto and manual backups.' : '选择已保存令牌，点「获取我的仓库」，再选择私有备份仓库。选择后会自动保存，自动和手动备份共用此配置。'}</li>
+                  <li>{isEn ? 'Set an interval and enable auto backup, or use "Back up now" and "Download backups" under Manual operations.' : '设置间隔后开启自动备份，或在「手动操作」中使用「立即备份」和「下载备份」。'}</li>
                 </ol>
               </section>
             </div>

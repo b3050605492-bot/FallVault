@@ -308,13 +308,21 @@ fn delete_remote_file(
     Ok(())
 }
 
-// 最多保留的仓库备份份数
-const KEEP_MAX: usize = 10;
+const DEFAULT_KEEP_MAX: usize = 10;
+const MAX_KEEP_MAX: usize = 100;
 
 // 上传最新备份到仓库（每次生成带时间的新文件名，并清理旧备份；首次创建说明 md）
 #[tauri::command]
-pub fn github_upload_backup(token: String, repo: String, data_dir: String) -> Result<String, String> {
+pub fn github_upload_backup(
+    token: String,
+    repo: String,
+    data_dir: String,
+    max_backups: Option<usize>,
+) -> Result<String, String> {
     safe_run(|| {
+        let keep_max = max_backups
+            .unwrap_or(DEFAULT_KEEP_MAX)
+            .clamp(1, MAX_KEEP_MAX);
         let backup_dir = Path::new(&data_dir).join("backups");
         let src = latest_backup(&backup_dir)?;
         let bytes = fs::read(&src).map_err(|e| format!("读取备份失败：{}", e))?;
@@ -346,9 +354,9 @@ pub fn github_upload_backup(token: String, repo: String, data_dir: String) -> Re
             ));
         }
 
-        // 清理：只保留最近 KEEP_MAX 份
+        // 清理：按用户设置保留最近若干份（后端限制为 1..=100）
         let mut files = list_backup_files(&cli, &token, &repo)?;
-        while files.len() > KEEP_MAX {
+        while files.len() > keep_max {
             let (old_name, old_sha) = files.remove(0);
             let _ = delete_remote_file(&cli, &token, &repo, &old_name, &old_sha);
         }

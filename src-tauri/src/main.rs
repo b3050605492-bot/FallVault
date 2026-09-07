@@ -22,17 +22,23 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 // 用系统文件管理器打开指定文件夹（Windows 下调用 explorer）
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
+    let folder = std::path::Path::new(path.trim());
+    if !folder.is_dir() {
+        return Err(format!("文件夹不存在: {}", folder.display()));
+    }
+
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer")
-            .arg(format!("\"{}\"", path))
+            // Command 会自行处理含空格的参数，手动加引号会让 Explorer 找不到路径。
+            .arg(folder)
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
     #[cfg(not(target_os = "windows"))]
     {
         Command::new("xdg-open")
-            .arg(path)
+            .arg(folder)
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
@@ -215,6 +221,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .manage(Arc::new(AutofillState::new()))
         .manage(Arc::new(LockPolicy { grace_enabled: Mutex::new(false) }))
         .setup(|app| {
