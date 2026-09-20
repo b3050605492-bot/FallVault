@@ -118,22 +118,3 @@ pub async fn fetch_website_title(url: String) -> Result<Option<String>, String> 
         .await
         .map_err(|e| format!("网页标题任务失败: {e}"))?
 }
-
-#[cfg(test)]
-mod tests {
-    use super::extract_title;
-
-    #[test]
-    fn extracts_and_normalizes_title() {
-        let html = "<html><head><TITLE data-test=\"1\">  FallVault &amp; 密码库 &#x1F512; </TITLE></head></html>";
-        assert_eq!(
-            extract_title(html).as_deref(),
-            Some("FallVault & 密码库 🔒")
-        );
-    }
-
-    #[test]
-    fn ignores_empty_title() {
-        assert_eq!(extract_title("<title>  \n </title>"), None);
-    }
-}

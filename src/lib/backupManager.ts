@@ -1,6 +1,13 @@
 import { join } from '@tauri-apps/api/path';
 import { getMasterPassword } from '@/lib/crypto';
-import { buildBackupContent, restoreVaultFromContent } from '@/lib/vaultBackup';
+import {
+  buildBackupContent,
+  inspectBackupForEntryRecoveries,
+  inspectBackupForEntryRecovery,
+  restoreVaultFromContent,
+  type EntryRecoveryIssue,
+  type EntryRecoveryPreview,
+} from '@/lib/vaultBackup';
 import { useAppStore } from '@/stores/appStore';
 import {
   clearVaultChangeMarker,
@@ -131,6 +138,92 @@ export async function restoreBackup(path: string, password: string): Promise<{ n
     console.error('restoreBackup failed', e);
     return null;
   }
+}
+
+export async function findEntryRecoveryInAutoBackups(
+  password: string,
+  issue: EntryRecoveryIssue,
+): Promise<EntryRecoveryPreview> {
+  const backups = await listBackups();
+  if (!backups.length) throw new Error('没有找到自动备份');
+  let openedBackup = false;
+  for (const backup of backups) {
+    try {
+      const text: string = await invoke('read_text_file', { path: backup.path });
+      const preview = await inspectBackupForEntryRecovery(
+        password, text, issue, backup.name, backup.time,
+      );
+      openedBackup = true;
+      if (preview) return preview;
+    } catch (error: any) {
+      if (!String(error?.message || error).includes('备份密码错误')) throw error;
+    }
+  }
+  if (!openedBackup) throw new Error('原主密码不正确，或现有自动备份不是用该密码创建的');
+  throw new Error('备份可以解密，但没有找到可恢复的异常字段');
+}
+
+export async function findEntryRecoveriesInAutoBackups(
+  password: string,
+  issues: EntryRecoveryIssue[],
+): Promise<EntryRecoveryPreview[]> {
+  const backups = await listBackups();
+  if (!backups.length) throw new Error('没有找到自动备份');
+  const remaining = new Map(issues.map((issue) => [issue.entryId, issue]));
+  const found = new Map<number, EntryRecoveryPreview>();
+  let openedBackup = false;
+
+  for (const backup of backups) {
+    try {
+      const text: string = await invoke('read_text_file', { path: backup.path });
+      const previews = await inspectBackupForEntryRecoveries(
+        password, text, [...remaining.values()], backup.name, backup.time,
+      );
+      openedBackup = true;
+      for (const preview of previews) {
+        found.set(preview.entryId, preview);
+        remaining.delete(preview.entryId);
+      }
+      if (!remaining.size) break;
+    } catch (error: any) {
+      if (!String(error?.message || error).includes('备份密码错误')) throw error;
+    }
+  }
+  if (!openedBackup) throw new Error('原主密码不正确，或现有自动备份不是用该密码创建的');
+  if (remaining.size) {
+    const names = [...remaining.values()].map((issue) => issue.title || `ID ${issue.entryId}`).join('、');
+    throw new Error(`已有备份仍缺少 ${remaining.size} 个账号的可恢复字段：${names}`);
+  }
+  return issues.map((issue) => found.get(issue.entryId) as EntryRecoveryPreview);
+}
+
+export async function findEntryRecoveryInFile(
+  path: string,
+  password: string,
+  issue: EntryRecoveryIssue,
+): Promise<EntryRecoveryPreview> {
+  const text: string = await invoke('read_text_file', { path });
+  const name = path.split(/[\\/]/).pop() || path;
+  const preview = await inspectBackupForEntryRecovery(password, text, issue, name, name);
+  if (!preview) throw new Error('该备份中没有找到可恢复的异常字段');
+  return preview;
+}
+
+export async function findEntryRecoveriesInFile(
+  path: string,
+  password: string,
+  issues: EntryRecoveryIssue[],
+): Promise<EntryRecoveryPreview[]> {
+  const text: string = await invoke('read_text_file', { path });
+  const name = path.split(/[\\/]/).pop() || path;
+  const previews = await inspectBackupForEntryRecoveries(password, text, issues, name, name);
+  const foundIds = new Set(previews.map((preview) => preview.entryId));
+  const missing = issues.filter((issue) => !foundIds.has(issue.entryId));
+  if (missing.length) {
+    const names = missing.map((issue) => issue.title || `ID ${issue.entryId}`).join('、');
+    throw new Error(`该备份缺少 ${missing.length} 个账号的可恢复字段：${names}`);
+  }
+  return previews;
 }
 
 // 自动备份调度器（返回停止函数）

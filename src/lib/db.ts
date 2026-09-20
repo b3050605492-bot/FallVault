@@ -3,6 +3,7 @@ import { remove } from '@tauri-apps/plugin-fs';
 import { appDataDir } from '@tauri-apps/api/path';
 import type { Entry, Folder, Tag, PasswordHistory, Attachment } from '@/types';
 import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
+import { ENCRYPTED_ENTRY_FIELDS, encryptedFieldLabel } from './entryEncryption';
 import { getDbPath } from './dbPath';
 import { markVaultChanged } from './vaultChange';
 
@@ -191,19 +192,19 @@ export async function deleteTag(id: number): Promise<void> {
 }
 
 // === 加解密辅助 ===
-// 解密一行 entry 的敏感字段（password/username/notes/custom_fields）
+// 解密 entry 的全部敏感字段；失败字段随记录返回，供提示和保存保护使用。
 // 单条解密失败不拖垮整组：该字段置空并记录错误（可能是旧密钥加密的残留）
 async function decryptRows(rows: any[]): Promise<any[]> {
   const key = getMasterKey();
   const out: any[] = [];
   for (const r of rows) {
     const row: any = { ...r, password: '', username: '', notes: '', totp_secret: '', customFields: [] };
-    let err = '';
-    for (const field of ['password', 'username', 'notes', 'totp_secret'] as const) {
+    const failedFields: string[] = [];
+    for (const field of ENCRYPTED_ENTRY_FIELDS.filter((field) => field !== 'custom_fields')) {
       try {
         row[field] = await decryptField(key as any, r[field]);
       } catch (e: any) {
-        if (!err) err = `${field}=${e?.message || 'decrypt fail'}`;
+        failedFields.push(field);
         row[field] = '';
       }
     }
@@ -211,10 +212,12 @@ async function decryptRows(rows: any[]): Promise<any[]> {
     try {
       const raw = r.custom_fields ? await decryptField(key as any, r.custom_fields) : '';
       row.customFields = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(row.customFields)) throw new Error('Invalid custom fields');
     } catch {
       row.customFields = [];
+      failedFields.push('custom_fields');
     }
-    if (err) row.__decryptError = err;
+    row.decryptErrors = failedFields;
     out.push(row);
   }
   return out;
@@ -344,10 +347,14 @@ export async function createEntry(entry: Partial<Entry>, tagIds: number[] = []):
 
 export async function updateEntry(id: number, entry: Partial<Entry>, tagIds?: number[]): Promise<void> {
   const key = getMasterKey();
+  const current = await getEntryById(id);
+  if (current?.decryptErrors?.length) {
+    throw new Error(`账号存在无法解密的字段（${current.decryptErrors.map((field) => encryptedFieldLabel(field)).join('、')}），已阻止保存以保留原始数据。`);
+  }
 
   // Save password history if password changed
   if (entry.password) {
-    const old = await getEntryById(id);
+    const old = current;
     if (old && old.password !== entry.password) {
       await getDb().execute(
         'INSERT INTO password_history (entry_id, old_password) VALUES (?, ?)',

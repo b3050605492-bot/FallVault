@@ -16,6 +16,7 @@ import { TotpQrTools } from '@/components/TotpQrTools';
 import { getIconsDir, getAttachmentsDir, isLocalMediaPath } from '@/lib/mediaPaths';
 import { writeFileBytes, removePath, readFileBytes } from '@/lib/rustFs';
 import { BUILTIN_TEMPLATES } from '@/lib/templates';
+import { encryptedFieldLabel } from '@/lib/entryEncryption';
 import { startWindowDragFromBackdrop } from '@/lib/windowDrag';
 
 export function EntryModal() {
@@ -318,6 +319,10 @@ export function EntryModal() {
   };
 
   const handleSave = async () => {
+    if (editingEntry?.decryptErrors?.length) {
+      addToast(isEn ? 'Unreadable fields must be recovered before saving.' : '该账号有无法解密的字段，已阻止保存以保留原始数据。', 'warning');
+      return;
+    }
     if (!form.title?.trim()) {
       addToast('请填写标题', 'warning');
       return;
@@ -346,7 +351,7 @@ export function EntryModal() {
       setIsEntryModalOpen(false);
       setEditingEntry(null);
     } catch (e) {
-      addToast('保存失败，请重试', 'error');
+      addToast(e instanceof Error ? e.message : '保存失败，请重试', 'error');
     }
   };
 
@@ -710,7 +715,8 @@ export function EntryModal() {
         <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-[rgba(192,200,216,0.08)]">
           <button onClick={() => { setIsEntryModalOpen(false); setEditingEntry(null); }}
             className="rune-btn px-5 py-2.5 text-sm">取消</button>
-          <SpecularButton onClick={handleSave} className="px-6 py-2.5 text-sm" style={{ background: 'rgba(210,210,220,0.15)', borderColor: 'rgba(210,210,220,0.35)', color: 'var(--mint)' }}>
+          {editingEntry?.decryptErrors?.length ? <p className="text-xs text-amber-200 flex-1">{isEn ? 'Unreadable fields (saving blocked): ' : '无法解密，已阻止保存：'}{editingEntry.decryptErrors.map((field) => encryptedFieldLabel(field, isEn)).join('、')}</p> : null}
+          <SpecularButton disabled={!!editingEntry?.decryptErrors?.length} onClick={handleSave} className="px-6 py-2.5 text-sm" style={{ background: 'rgba(210,210,220,0.15)', borderColor: 'rgba(210,210,220,0.35)', color: 'var(--mint)' }}>
             <Save size={16} /> {isEditing ? '保存' : '保存'}
           </SpecularButton>
         </div>

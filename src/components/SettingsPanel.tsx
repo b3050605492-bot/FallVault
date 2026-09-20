@@ -4,12 +4,13 @@ import { translate, LangKey } from '@/lib/i18n';
 import { BUILTIN_WALLPAPERS, DEFAULT_BG_TOKEN } from '@/lib/constants';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { X, Palette, Languages, GlassWater, Waves, ImagePlus, Film, FolderOpen, FolderCog, ShieldCheck, Lock, Timer, Save, Settings2, Smartphone, Keyboard, Github, HelpCircle, KeyRound } from 'lucide-react';
-import { changeMasterPassword, lockVault } from '@/lib/crypto';
+import { changeMasterPassword, lockVault, VaultIntegrityError } from '@/lib/crypto';
 import { open } from '@tauri-apps/plugin-dialog';
 import { copyFile, removePath } from '@/lib/rustFs';
 import { getBackgroundsDir } from '@/lib/mediaPaths';
 import { setAutofillHotkey } from '@/lib/autofill';
 import { useToastStore } from '@/stores/toastStore';
+import { useIntegrityStore } from '@/stores/integrityStore';
 import { useState, useEffect } from 'react';
 import { GITHUB_BACKUP_SCHEDULE_EVENT, getDataDir, getNextGithubBackupAt } from '@/lib/backupManager';
 import { clearVaultChangeMarker, getVaultChangeMarker, markVaultChanged, setLastGithubBackupAt } from '@/lib/vaultChange';
@@ -239,6 +240,7 @@ export function SettingsPanel() {
 
   // 修改主密码
   const handleChangePassword = async () => {
+    if (pwdLoading) return;
     if (newPwd.length < 4) {
       addToast(isEn ? 'Password too short (min 4)' : '主密码至少 4 位', 'warning');
       return;
@@ -250,13 +252,19 @@ export function SettingsPanel() {
     setPwdLoading(true);
     try {
       await changeMasterPassword(newPwd);
+      useIntegrityStore.getState().setReport(null);
+      await useAppStore.getState().refreshAll();
       setShowPwdModal(false);
       setNewPwd('');
       setConfirmPwd('');
       addToast(isEn ? 'Master password updated' : '主密码已更新', 'success');
     } catch (e) {
       console.error('change master password failed', e);
-      addToast(isEn ? 'Update failed' : '更新失败', 'error');
+      if (e instanceof VaultIntegrityError) {
+        useIntegrityStore.getState().setReport(e.report);
+        useIntegrityStore.getState().setOpen(true);
+      }
+      addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setPwdLoading(false);
     }
@@ -268,6 +276,8 @@ export function SettingsPanel() {
     try {
       const { verifyIntegrity } = await import('@/lib/crypto');
       const report = await verifyIntegrity();
+      useIntegrityStore.getState().setReport(report);
+      useIntegrityStore.getState().setOpen(true);
       if (report.ok) {
         addToast(
           isEn
@@ -280,8 +290,8 @@ export function SettingsPanel() {
       } else {
         addToast(
           isEn
-            ? `${report.corruptEntries} entries cannot be decrypted`
-            : `${report.corruptEntries} 条数据无法解密（可能被篡改）`,
+            ? `${report.corruptEntries} accounts have unreadable data`
+            : `${report.corruptEntries} 个账号存在无法读取的数据，请查看详情`,
           'warning'
         );
       }
@@ -453,7 +463,7 @@ export function SettingsPanel() {
         {/* 头部 */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-[var(--moon)]">{t('settings')}</h2>
-          <button onClick={() => setIsSettingsOpen(false)}
+          <button disabled={pwdLoading} onClick={() => setIsSettingsOpen(false)}
             className="p-1.5 rounded-lg text-[var(--moon-faint)] hover:text-[var(--moon)] hover:bg-[rgba(192,200,216,0.08)] transition-all">
             <X size={20} />
           </button>
@@ -1399,13 +1409,14 @@ export function SettingsPanel() {
               <h3 className="text-base font-semibold text-[var(--moon)]">
                 {isEn ? 'Change Master Password' : '修改主密码'}
               </h3>
-              <button onClick={() => setShowPwdModal(false)} className="text-[var(--moon-faint)] hover:text-[var(--moon)]">
+              <button disabled={pwdLoading} onClick={() => setShowPwdModal(false)} className="text-[var(--moon-faint)] hover:text-[var(--moon)]">
                 <X size={16} />
               </button>
             </div>
             <div className="space-y-3">
               <input
                 type={showNewPwd ? 'text' : 'password'}
+                disabled={pwdLoading}
                 value={newPwd}
                 onChange={(e) => setNewPwd(e.target.value)}
                 placeholder={isEn ? 'New master password' : '新主密码（至少 4 位）'}
@@ -1413,6 +1424,7 @@ export function SettingsPanel() {
               />
               <input
                 type={showNewPwd ? 'text' : 'password'}
+                disabled={pwdLoading}
                 value={confirmPwd}
                 onChange={(e) => setConfirmPwd(e.target.value)}
                 placeholder={isEn ? 'Confirm new password' : '再次输入新主密码'}
@@ -1432,8 +1444,8 @@ export function SettingsPanel() {
               </button>
               <p className="text-[11px] text-[var(--moon-faint)] leading-relaxed">
                 {isEn
-                  ? 'Changing the password re-encrypts the key. Existing data stays encrypted.'
-                  : '修改主密码会重新派生密钥，已加密的数据保持不变，无需迁移。'}
+                  ? 'All encrypted fields, password history and attachments will be re-encrypted. If any data cannot be read, the change will stop.'
+                  : '将重新加密全部敏感字段、密码历史和附件。若存在无法读取的数据，将停止修改并显示异常详情。'}
               </p>
             </div>
           </div>

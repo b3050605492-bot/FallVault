@@ -6,6 +6,7 @@
 mod autofill;
 mod github_backup;
 mod screen_capture;
+mod vault_rekey;
 mod website_metadata;
 use autofill::{start_autofill, AutofillState, FillTarget};
 pub use github_backup::*;
@@ -18,7 +19,7 @@ use website_metadata::fetch_website_title;
 use std::process::Command;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
@@ -210,6 +211,30 @@ fn set_quick_open_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<(), St
     .map_err(|e| format!("注册快速打开热键失败：{}", e))
 }
 
+// 托盘左键和菜单共用恢复逻辑，保留关闭到托盘后的密码验证策略。
+fn show_main_window_from_tray(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        // 已可见（包括最小化）：恢复并聚焦，不重新锁定。
+        if w.is_visible().unwrap_or(false) {
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        } else {
+            // 从「关闭到托盘」恢复：未开启免验证时长则要求重输密码。
+            let grace = *app.state::<Arc<LockPolicy>>().grace_enabled.lock().unwrap();
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+            if !grace {
+                let _ = app.emit("fallvault:lock", ());
+            }
+        }
+        // 外层窗口激活后，还需要将键盘焦点交给内嵌页面。
+        if let Err(err) = w.as_ref().set_focus() {
+            eprintln!("恢复页面焦点失败: {err}");
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         // 单实例：多次双击 exe 只保留一个应用，新实例聚焦已有窗口并退出
@@ -227,7 +252,9 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(Arc::new(AutofillState::new()))
-        .manage(Arc::new(LockPolicy { grace_enabled: Mutex::new(false) }))
+        .manage(Arc::new(LockPolicy {
+            grace_enabled: Mutex::new(false),
+        }))
         .setup(|app| {
             // 系统托盘：Show / Lock / Quit
             let show_i = MenuItem::with_id(app, "show", "打开 FallVault", true, None::<&str>)?;
@@ -239,25 +266,19 @@ fn main() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("FallVault")
                 .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            // 已可见：只聚焦，不打扰正在使用的用户
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.set_focus();
-                            } else {
-                                // 从「关闭到托盘」恢复：若未开启免验证时长，则强制重新锁定（要求重输密码）
-                                let grace = *app.state::<Arc<LockPolicy>>().grace_enabled.lock().unwrap();
-                                let _ = w.show();
-                                let _ = w.unminimize();
-                                let _ = w.set_focus();
-                                if !grace {
-                                    let _ = app.emit("fallvault:lock", ());
-                                }
-                            }
-                        }
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window_from_tray(tray.app_handle());
                     }
+                })
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => show_main_window_from_tray(app),
                     "lock" => {
                         let _ = app.emit("fallvault:lock", ());
                     }
@@ -274,7 +295,11 @@ fn main() {
                 win.clone().on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let grace = *app_handle.state::<Arc<LockPolicy>>().grace_enabled.lock().unwrap();
+                        let grace = *app_handle
+                            .state::<Arc<LockPolicy>>()
+                            .grace_enabled
+                            .lock()
+                            .unwrap();
                         if !grace {
                             let _ = app_handle.emit("fallvault:lock", ());
                         }
@@ -292,6 +317,8 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            vault_rekey::commit_master_password_change,
+            vault_rekey::commit_entry_recovery,
             open_folder,
             get_exe_dir,
             create_dir_all,

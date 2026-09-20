@@ -3,6 +3,7 @@
 // 备份密码通过 PBKDF2(15万次) 派生密钥 → 随机 data key 加密数据 → data key 抛加密存文件头
 import { writeFile } from '@tauri-apps/plugin-fs';
 import Database from '@tauri-apps/plugin-sql';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
 import { getDbPath } from './dbPath';
 import { markVaultChanged } from './vaultChange';
@@ -79,6 +80,7 @@ interface BackupData {
     website: string;
     notes: string;
     totp_secret: string;
+    custom_fields?: { key: string; value: string; hidden?: boolean }[];
     icon: string;
     folder_id: number | null;
     is_favorite: boolean;
@@ -149,8 +151,11 @@ export async function buildBackupContent(
     const decrypt = async (v: string) => {
       if (!v) return '';
       if (!isEncryptedField(v)) return v; // 明文旧数据
-      try { return await decryptField(masterKey as any, v); } catch { return ''; }
+      return decryptField(masterKey as any, v);
     };
+    const customFieldsText = await decrypt(e.custom_fields || '');
+    const customFields = customFieldsText ? JSON.parse(customFieldsText) : [];
+    if (!Array.isArray(customFields)) throw new Error(`账号 ${e.id} 的自定义字段格式无效，已停止生成备份`);
     entries.push({
       id: e.id,
       title: e.title || '',
@@ -159,13 +164,14 @@ export async function buildBackupContent(
       website: e.website || '',
       notes: await decrypt(e.notes || ''),
       totp_secret: await decrypt(e.totp_secret || ''),
+      custom_fields: customFields,
       icon: e.icon || '',
       folder_id: e.folder_id ?? null,
       is_favorite: !!e.is_favorite,
       created_at: e.created_at || '',
       updated_at: e.updated_at || '',
       tag_ids: etMap.get(e.id) || [],
-      attachments: includeAttachments ? (attachByEntry.get(e.entry_id) || []) : undefined,
+      attachments: includeAttachments ? (attachByEntry.get(e.id) || []) : undefined,
     });
   }
 
@@ -235,7 +241,7 @@ export async function restoreVaultFromContent(password: string, text: string): P
   return applyBackupContent(password, text);
 }
 
-async function applyBackupContent(password: string, text: string): Promise<RestoreResult> {
+async function decryptBackupContent(password: string, text: string): Promise<BackupData> {
   let header: any;
   try {
     header = JSON.parse(text);
@@ -268,6 +274,151 @@ async function applyBackupContent(password: string, text: string): Promise<Resto
   }
   const data: BackupData = JSON.parse(new TextDecoder().decode(dataBytes));
   if (data.app !== 'FallVault') throw new Error('不是 FallVault 备份');
+  return data;
+}
+
+export type RecoverableEntryField = 'username' | 'password' | 'notes' | 'totp_secret' | 'custom_fields';
+
+export interface EntryRecoveryIssue {
+  entryId: number;
+  title: string;
+  website: string;
+  fields: string[];
+}
+
+export interface EntryRecoveryPreview {
+  backupName: string;
+  backupTime: string;
+  entryId: number;
+  title: string;
+  fields: RecoverableEntryField[];
+  values: Partial<Record<RecoverableEntryField, string>>;
+}
+
+const RECOVERABLE_ENTRY_FIELDS: RecoverableEntryField[] = [
+  'username', 'password', 'notes', 'totp_secret', 'custom_fields',
+];
+
+function inspectBackupDataForEntryRecovery(
+  data: BackupData,
+  issue: EntryRecoveryIssue,
+  backupName: string,
+  backupTime: string,
+): EntryRecoveryPreview | null {
+  let entry = data.entries.find((item) =>
+    Number(item.id) === issue.entryId &&
+    (item.title === issue.title || (!!issue.website && item.website === issue.website))
+  );
+  if (!entry) {
+    const matches = data.entries.filter((item) =>
+      item.title === issue.title && item.website === issue.website
+    );
+    if (matches.length !== 1) return null;
+    entry = matches[0];
+  }
+
+  const values: EntryRecoveryPreview['values'] = {};
+  const fields: RecoverableEntryField[] = [];
+  for (const field of RECOVERABLE_ENTRY_FIELDS) {
+    if (!issue.fields.includes(field)) continue;
+    const value = field === 'custom_fields'
+      ? (entry.custom_fields?.length ? JSON.stringify(entry.custom_fields) : '')
+      : entry[field];
+    // An empty historical value cannot repair a ciphertext failure and must
+    // never overwrite the current raw value.
+    if (!value) continue;
+    values[field] = value;
+    fields.push(field);
+  }
+  if (!fields.length) return null;
+  return { backupName, backupTime, entryId: issue.entryId, title: issue.title, fields, values };
+}
+
+// Read one encrypted backup without importing it, and return only the fields
+// currently known to be unreadable for one matching account.
+export async function inspectBackupForEntryRecovery(
+  password: string,
+  text: string,
+  issue: EntryRecoveryIssue,
+  backupName: string,
+  backupTime: string,
+): Promise<EntryRecoveryPreview | null> {
+  const data = await decryptBackupContent(password, text);
+  return inspectBackupDataForEntryRecovery(data, issue, backupName, backupTime);
+}
+
+export async function inspectBackupForEntryRecoveries(
+  password: string,
+  text: string,
+  issues: EntryRecoveryIssue[],
+  backupName: string,
+  backupTime: string,
+): Promise<EntryRecoveryPreview[]> {
+  const data = await decryptBackupContent(password, text);
+  return issues
+    .map((issue) => inspectBackupDataForEntryRecovery(data, issue, backupName, backupTime))
+    .filter((preview): preview is EntryRecoveryPreview => preview !== null);
+}
+
+// Preflight every account, encrypt replacements, then commit all rows in one
+// native SQLite transaction. Full-row compare-and-set prevents overwriting a
+// concurrent edit and rolls the entire batch back if any account changed.
+export async function applyEntryRecoveries(previews: EntryRecoveryPreview[]): Promise<number> {
+  if (!previews.length) throw new Error('没有可恢复的异常字段');
+  const dbPath = await getDbPath();
+  const d = await Database.load(dbPath);
+  const masterKey = getMasterKey();
+  if (!masterKey) throw new Error('vault locked');
+  const fieldIndexes = new Map(RECOVERABLE_ENTRY_FIELDS.map((field, index) => [field, index]));
+  const entries: {
+    id: number;
+    title: string;
+    before: (string | null)[];
+    after: (string | null)[];
+  }[] = [];
+  let recoveredFields = 0;
+
+  for (const preview of previews) {
+    const rows: any[] = await d.select(
+      'SELECT id, title, username, password, notes, totp_secret, custom_fields FROM entries WHERE id = ?',
+      [preview.entryId],
+    );
+    const row = rows[0];
+    if (!row || row.title !== preview.title) throw new Error(`账号“${preview.title}”已发生变化，请重新检查`);
+    const before = RECOVERABLE_ENTRY_FIELDS.map((field) => row[field] ?? null);
+    const after = [...before];
+    let entryFields = 0;
+
+    for (const field of preview.fields) {
+      const value = preview.values[field];
+      if (!value) continue;
+      let stillBroken = false;
+      try {
+        const plain = await decryptField(masterKey as any, row[field]);
+        if (field === 'custom_fields' && plain && !Array.isArray(JSON.parse(plain))) stillBroken = true;
+      } catch {
+        stillBroken = true;
+      }
+      if (!stillBroken) continue;
+      after[fieldIndexes.get(field) as number] = await encryptField(masterKey as any, value);
+      entryFields++;
+    }
+    if (!entryFields) throw new Error(`账号“${preview.title}”的异常字段已变化，请重新执行完整性检查`);
+    recoveredFields += entryFields;
+    entries.push({ id: preview.entryId, title: preview.title, before, after });
+  }
+
+  await tauriInvoke('commit_entry_recovery', { db: dbPath, data: { entries } });
+  markVaultChanged();
+  return recoveredFields;
+}
+
+export async function applyEntryRecovery(preview: EntryRecoveryPreview): Promise<number> {
+  return applyEntryRecoveries([preview]);
+}
+
+async function applyBackupContent(password: string, text: string): Promise<RestoreResult> {
+  const data = await decryptBackupContent(password, text);
 
   const d = await Database.load(await getDbPath());
   const masterKey = getMasterKey();
@@ -334,13 +485,14 @@ async function applyBackupContent(password: string, text: string): Promise<Resto
       continue;
     }
     const r = await d.execute(
-      `INSERT INTO entries (title, username, password, totp_secret, website, notes, icon, folder_id, is_favorite, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO entries (title, username, password, totp_secret, website, notes, icon, folder_id, is_favorite, created_at, updated_at, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         e.title, await enc(e.username), await enc(e.password), await enc(e.totp_secret),
         e.website, await enc(e.notes), e.icon || 'Lock',
         e.folder_id != null ? (folderIdMap.get(e.folder_id) ?? null) : null,
         e.is_favorite ? 1 : 0, e.created_at || '', e.updated_at || '',
+        e.custom_fields?.length ? await enc(JSON.stringify(e.custom_fields)) : '',
       ]
     );
     const newEntryId = Number(r.lastInsertId);

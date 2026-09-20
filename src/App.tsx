@@ -8,6 +8,8 @@ import { EntryList } from '@/components/EntryList';
 import { EntryModal } from '@/components/EntryModal';
 import { EntryDetail } from '@/components/EntryDetail';
 import { Toast } from '@/components/Toast';
+import { IntegrityDetails, IntegrityWarning } from '@/components/IntegrityDetails';
+import { useIntegrityStore } from '@/stores/integrityStore';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { PasswordGenerator } from '@/components/PasswordGenerator';
@@ -32,6 +34,10 @@ function App() {
   const { isEntryModalOpen, isSettingsOpen, isPasswordGeneratorOpen, isSecurityAuditOpen, isTotpMigrationOpen, isDetailOpen, settings } = useAppStore();
   const [locked, setLocked] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
+
+  useEffect(() => {
+    if (locked) useIntegrityStore.getState().setOpen(false);
+  }, [locked]);
 
   // 启动时应用主题 + 毛玻璃透明度
   useEffect(() => {
@@ -169,6 +175,7 @@ function App() {
             <main className="flex-1 flex flex-col h-full overflow-hidden">
               <TopBar />
               <div className="flex-1 overflow-y-auto p-4">
+                <IntegrityWarning />
                 <EntryList />
               </div>
             </main>
@@ -183,6 +190,7 @@ function App() {
       {!locked && isPasswordGeneratorOpen && <PasswordGenerator />}
       {!locked && isSecurityAuditOpen && <SecurityAuditModal />}
       {!locked && isTotpMigrationOpen && <TotpMigrationModal />}
+      {!locked && <IntegrityDetails />}
       {!locked && importOpen && (
         <ImportModal
           onClose={() => setImportOpen(false)}

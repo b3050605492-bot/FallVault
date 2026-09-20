@@ -35,6 +35,7 @@ export interface Entry {
   folder_name?: string;
   password_history?: PasswordHistory[];
   customFields?: CustomField[];
+  decryptErrors?: string[]; // 无法解密的字段；编辑时禁止用空值覆盖原始密文
 }
 
 export interface PasswordHistory {

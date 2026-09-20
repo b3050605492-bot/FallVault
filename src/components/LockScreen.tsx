@@ -1,6 +1,10 @@
 import { useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { X } from 'lucide-react';
 import { useToastStore } from '@/stores/toastStore';
 import { setupMasterPassword, unlockVault, hasMasterPassword, migratePlaintextToEncrypted } from '@/lib/crypto';
+import { useIntegrityStore } from '@/stores/integrityStore';
+import { startWindowDragFromBackdrop } from '@/lib/windowDrag';
 import logo from '@/assets/log.png';
 
 interface LockScreenProps {
@@ -19,6 +23,7 @@ export function LockScreen({ onUnlocked }: LockScreenProps) {
   const [isSetup, setIsSetup] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
+  const [closeHovered, setCloseHovered] = useState(false);
 
   // 首次挂载检测状态
   useState(() => {
@@ -72,11 +77,12 @@ export function LockScreen({ onUnlocked }: LockScreenProps) {
         try {
           const { verifyIntegrity } = await import('@/lib/crypto');
           const report = await verifyIntegrity();
+          useIntegrityStore.getState().setReport(report);
           if (!report.ok) {
             if (report.dbError) {
               addToast(`⚠️ 数据库完整性异常：${report.dbError}`, 'error');
             } else if (report.corruptEntries > 0) {
-              addToast(`⚠️ 发现 ${report.corruptEntries} 条无法解密的数据（可能被篡改或密钥不匹配）`, 'warning');
+              addToast(`发现 ${report.corruptEntries} 个账号存在无法读取的数据`, 'warning', { label: '查看详情', onClick: () => useIntegrityStore.getState().setOpen(true) });
             }
           }
         } catch {}
@@ -94,7 +100,26 @@ export function LockScreen({ onUnlocked }: LockScreenProps) {
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center p-6">
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center p-6"
+      onMouseDown={startWindowDragFromBackdrop}
+    >
+      <button
+        type="button"
+        onPointerEnter={() => setCloseHovered(true)}
+        onPointerMove={() => setCloseHovered(true)}
+        onPointerLeave={() => setCloseHovered(false)}
+        onClick={() => {
+          // 隐藏窗口前清掉高亮，避免恢复时沿用尚未刷新的 CSS 悬停状态。
+          setCloseHovered(false);
+          void getCurrentWindow().close();
+        }}
+        className={`absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${closeHovered ? 'bg-red-500/70 text-white' : 'bg-black/20 text-white/80'} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mint)]`}
+        title="关闭"
+        aria-label="关闭"
+      >
+        <X size={18} aria-hidden="true" />
+      </button>
       {/* 毛玻璃卡片 */}
       <div
         className="glass-card w-full max-w-sm rounded-3xl p-8"

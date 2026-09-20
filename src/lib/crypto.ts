@@ -1,6 +1,9 @@
 // FallVault 加密核心：主密码 + PBKDF2 派生 + AES-256-GCM 字段加密
 // 使用 Web Crypto API（Tauri WebView 原生支持，无需外部依赖）
 import Database from '@tauri-apps/plugin-sql';
+import { invoke } from '@tauri-apps/api/core';
+import { ENCRYPTED_ENTRY_FIELDS } from './entryEncryption';
+import { readFileBytes, writeFileBytes } from './rustFs';
 import { getDbPath } from './dbPath';
 import { markVaultChanged } from './vaultChange';
 
@@ -224,72 +227,74 @@ export async function lockVault(): Promise<void> {
   unlockExpireAt = null;
 }
 
-// 修改主密码（需已解锁）——无损版：先把全部数据用旧密钥解密，再用新密钥重新加密写回
+export class VaultIntegrityError extends Error {
+  constructor(public report: IntegrityReport) {
+    super('保险库存在无法读取的数据，主密码未修改。请查看异常详情。');
+  }
+}
+
+let changingPassword = false;
+
+// Prepare all ciphertext first; atomically replace rows, attachment paths and verifier.
 export async function changeMasterPassword(newPassword: string): Promise<void> {
   if (!masterKey) throw new Error('vault locked');
+  if (changingPassword) throw new Error('主密码正在修改，请稍候');
+  changingPassword = true;
   const oldKey = masterKey;
+  try {
+    const dbPath = await getDbPath();
+    const d = await Database.load(dbPath);
+    const oldSalt = await metaGet('master_salt');
+    const oldVerifier = await metaGet('master_verifier');
+    const report = await verifyIntegrity();
+    if (!report.ok) throw new VaultIntegrityError(report);
 
-  // 1. 用旧密钥读出全部明文
-  const d = await Database.load(await getDbPath());
-  const entries: any[] = await d.select(
-    'SELECT id, username, password, notes FROM entries'
-  );
-  const plain = [];
-  for (const r of entries) {
-    try {
-      plain.push({
-        id: r.id,
-        username: await decryptField(oldKey, r.username),
-        password: await decryptField(oldKey, r.password),
-        notes: await decryptField(oldKey, r.notes),
-      });
-    } catch (e) {
-      // 旧密钥解不开的记录（异常残留）跳过，不阻断改密码
-      console.error('re-encrypt skip entry', r.id, e);
+    const salt = randomBytes(SALT_LENGTH);
+    const newKey = await deriveKey(newPassword, salt);
+    const verifier = await encryptField(newKey, VERIFY_TEXT);
+    const rows: any[] = await d.select('SELECT * FROM entries');
+    const entries = [];
+    for (const row of rows) {
+      const after: string[] = [];
+      for (const field of ENCRYPTED_ENTRY_FIELDS) {
+        // Never skip a failed field or convert a decryption failure to an empty value.
+        after.push(await encryptField(newKey, await decryptField(oldKey, row[field])));
+      }
+      entries.push({ id: row.id, before: ENCRYPTED_ENTRY_FIELDS.map((field) => row[field] ?? null), after });
     }
-  }
-  const hisRows: any[] = await d.select(
-    'SELECT id, old_password FROM password_history'
-  );
-  const history: { id: number; old_password: string }[] = [];
-  for (const h of hisRows) {
-    try {
-      history.push({ id: h.id, old_password: await decryptField(oldKey, h.old_password) });
-    } catch (e) {
-      console.error('re-encrypt skip history', h.id, e);
+    const historyRows: any[] = await d.select('SELECT id, old_password FROM password_history');
+    const history = [];
+    for (const row of historyRows) {
+      history.push({ id: row.id, before: row.old_password, after: await encryptField(newKey, await decryptField(oldKey, row.old_password)) });
     }
+    const attachmentRows: any[] = await d.select('SELECT id, file_path FROM attachments');
+    const attachments = [];
+    for (const row of attachmentRows) {
+      const original = await readFileBytes(row.file_path);
+      const plaintext = await decryptAttachmentWithKey(oldKey, original);
+      const { encrypted } = await encryptAttachmentWithKey(newKey, plaintext);
+      const separator = Math.max(row.file_path.lastIndexOf('/'), row.file_path.lastIndexOf('\\'));
+      const path = row.file_path.slice(0, separator + 1) + 'rekey_' + crypto.randomUUID() + '.fa';
+      // New files are staged alongside the originals. A failed/interrupted commit
+      // leaves the old database and files usable; never overwrite a source attachment.
+      await writeFileBytes(path, encrypted);
+      await decryptAttachmentWithKey(newKey, await readFileBytes(path));
+      attachments.push({ id: row.id, before: row.file_path, after: path });
+    }
+    if (masterKey !== oldKey) throw new Error('保险库已锁定，请重新解锁后重试');
+    await invoke('commit_master_password_change', {
+      db: dbPath,
+      data: { oldSalt, oldVerifier, salt: bytesToB64(salt), verifier, entries, history, attachments },
+    });
+    // Do not revive a session that was locked while the commit was in progress.
+    if (masterKey === oldKey) {
+      masterKey = newKey;
+      masterPassword = newPassword;
+    }
+    markVaultChanged();
+  } finally {
+    changingPassword = false;
   }
-
-  // 2. 生成新盐 + 新密钥 + 新校验值
-  const salt = randomBytes(SALT_LENGTH);
-  const newKey = await deriveKey(newPassword, salt);
-  const verifier = await encryptField(newKey, VERIFY_TEXT);
-
-  // 3. 用新密钥重新加密全部数据并写回
-  for (const p of plain) {
-    await d.execute(
-      'UPDATE entries SET username = ?, password = ?, notes = ? WHERE id = ?',
-      [
-        await encryptField(newKey, p.username),
-        await encryptField(newKey, p.password),
-        await encryptField(newKey, p.notes),
-        p.id,
-      ]
-    );
-  }
-  for (const h of history) {
-    await d.execute(
-      'UPDATE password_history SET old_password = ? WHERE id = ?',
-      [await encryptField(newKey, h.old_password), h.id]
-    );
-  }
-
-  // 4. 更新元数据 + 内存密钥
-  await metaSet('master_salt', bytesToB64(salt));
-  await metaSet('master_verifier', verifier);
-  masterKey = newKey;
-  masterPassword = newPassword;
-  markVaultChanged();
 }
 
 // 首次设置主密码后：把数据库里已有的明文数据加密写回（数据迁移）
@@ -352,47 +357,72 @@ export async function migratePlaintextToEncrypted(): Promise<number> {
 // 1) SQLite 物理完整性（PRAGMA integrity_check）
 // 2) 全部条目解密健康检查（统计损坏/解不开的记录）
 
+export interface IntegrityIssue {
+  entryId: number;
+  title: string;
+  website: string;
+  deleted: boolean;
+  fields: string[];
+  historyIds: number[];
+  attachments: { id: number; name: string }[];
+}
+
 export interface IntegrityReport {
   ok: boolean;
   dbError?: string;
   corruptEntries: number;
   checkedEntries: number;
+  issues: IntegrityIssue[];
 }
 
 export async function verifyIntegrity(): Promise<IntegrityReport> {
-  const report: IntegrityReport = { ok: true, corruptEntries: 0, checkedEntries: 0 };
+  const report: IntegrityReport = { ok: true, corruptEntries: 0, checkedEntries: 0, issues: [] };
+  const key = masterKey;
+  if (!key) return { ...report, ok: false, dbError: '保险库已锁定，请先解锁' };
   try {
     const d = await Database.load(await getDbPath());
-    // 1) SQLite 物理完整性检查
-    const rows: any[] = await d.select('PRAGMA integrity_check');
-    const result = rows?.[0]?.['integrity_check'] ?? rows?.[0]?.integrity_check ?? rows?.[0]?.toString?.() ?? '';
-    if (result !== 'ok') {
+    const checks: any[] = await d.select('PRAGMA integrity_check');
+    if (checks.length !== 1 || checks[0].integrity_check !== 'ok') {
       report.ok = false;
-      report.dbError = String(result);
+      report.dbError = checks.map((row) => row.integrity_check).join('; ') || '完整性检查未返回结果';
     }
-    // 2) 解密健康检查（仅已解锁）
-    if (masterKey) {
-      const entries: any[] = await d.select('SELECT count(*) as n FROM entries');
-      const total = Number(entries?.[0]?.n ?? 0);
-      report.checkedEntries = total;
-      const all: any[] = await d.select('SELECT id, username, password, notes, totp_secret FROM entries LIMIT 500');
-      let corrupt = 0;
-      for (const r of all) {
-        for (const field of ['username', 'password', 'notes', 'totp_secret']) {
-          const v = r[field];
-          if (v && isEncryptedField(v)) {
-            try {
-              const dec = await decryptField(masterKey, v);
-              if (dec === undefined) corrupt++;
-            } catch {
-              corrupt++;
-            }
-          }
+    const all: any[] = await d.select('SELECT * FROM entries');
+    const entriesById = new Map(all.map((row) => [Number(row.id), row]));
+    const issues = new Map<number, IntegrityIssue>();
+    const addIssue = (entryId: number, field: string): IntegrityIssue => {
+      const row = entriesById.get(Number(entryId));
+      let issue = issues.get(Number(entryId));
+      if (!issue) {
+        issue = { entryId: Number(entryId), title: row?.title || '', website: row?.website || '', deleted: !!row?.deleted_at, fields: [], historyIds: [], attachments: [] };
+        issues.set(Number(entryId), issue);
+      }
+      if (!issue.fields.includes(field)) issue.fields.push(field);
+      return issue;
+    };
+    for (const row of all) {
+      report.checkedEntries++;
+      for (const field of ENCRYPTED_ENTRY_FIELDS) {
+        try {
+          const plaintext = await decryptField(key, row[field]);
+          if (field === 'custom_fields' && plaintext && !Array.isArray(JSON.parse(plaintext))) throw new Error('Invalid custom fields');
+        } catch {
+          addIssue(row.id, field);
         }
       }
-      report.corruptEntries = corrupt;
-      if (corrupt > 0) report.ok = false;
     }
+    const history: any[] = await d.select('SELECT id, entry_id, old_password FROM password_history');
+    for (const row of history) {
+      try { await decryptField(key, row.old_password); }
+      catch { addIssue(row.entry_id, 'password_history').historyIds.push(row.id); }
+    }
+    const attachments: any[] = await d.select('SELECT id, entry_id, file_name, file_path FROM attachments');
+    for (const row of attachments) {
+      try { await decryptAttachmentWithKey(key, await readFileBytes(row.file_path)); }
+      catch { addIssue(row.entry_id, 'attachment').attachments.push({ id: row.id, name: row.file_name }); }
+    }
+    report.issues = [...issues.values()];
+    report.corruptEntries = report.issues.length;
+    if (report.corruptEntries) report.ok = false;
   } catch (e: any) {
     report.ok = false;
     report.dbError = String(e?.message || e);
@@ -404,8 +434,11 @@ export async function verifyIntegrity(): Promise<IntegrityReport> {
 // ================= 附件加密 =================
 // 附件文件内容用主密钥 AES-GCM 加密存储（.fa 后缀），读取时解密
 export async function encryptAttachment(bytes: Uint8Array): Promise<{ encrypted: Uint8Array; meta: string }> {
-  const key = masterKey;
-  if (!key) throw new Error('vault locked');
+  if (!masterKey) throw new Error('vault locked');
+  return encryptAttachmentWithKey(masterKey, bytes);
+}
+
+async function encryptAttachmentWithKey(key: CryptoKey, bytes: Uint8Array): Promise<{ encrypted: Uint8Array; meta: string }> {
   const iv = randomBytes(IV_LENGTH);
   const ct = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: iv as unknown as BufferSource },
@@ -422,8 +455,11 @@ export async function encryptAttachment(bytes: Uint8Array): Promise<{ encrypted:
 }
 
 export async function decryptAttachment(encryptedBytes: Uint8Array): Promise<Uint8Array> {
-  const key = masterKey;
-  if (!key) throw new Error('vault locked');
+  if (!masterKey) throw new Error('vault locked');
+  return decryptAttachmentWithKey(masterKey, encryptedBytes);
+}
+
+async function decryptAttachmentWithKey(key: CryptoKey, encryptedBytes: Uint8Array): Promise<Uint8Array> {
   if (encryptedBytes.length < IV_LENGTH) throw new Error('bad attachment');
   const iv = encryptedBytes.slice(0, IV_LENGTH);
   const ct = encryptedBytes.slice(IV_LENGTH);

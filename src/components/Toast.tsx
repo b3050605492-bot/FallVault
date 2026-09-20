@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useToastStore } from '@/stores/toastStore';
+import type { ToastItem as ToastData } from '@/stores/toastStore';
 import { CheckCircle, AlertCircle, AlertTriangle, Info, X } from 'lucide-react';
 
 const icons = {
@@ -28,14 +29,15 @@ export function Toast() {
   );
 }
 
-function ToastItem({ toast, onClose }: { toast: { id: string; message: string; type: keyof typeof icons }; onClose: () => void }) {
+function ToastItem({ toast, onClose }: { toast: ToastData; onClose: () => void }) {
   const Icon = icons[toast.type];
   const color = colors[toast.type];
 
   useEffect(() => {
+    if (toast.action) return;
     const timer = setTimeout(onClose, 2000);
     return () => clearTimeout(timer);
-  }, [onClose]);
+  }, [onClose, toast.action]);
 
   return (
     <div
@@ -49,7 +51,11 @@ function ToastItem({ toast, onClose }: { toast: { id: string; message: string; t
       }}
     >
       <Icon size={18} style={{ color, flexShrink: 0 }} />
-      <span className="text-[var(--moon)] flex-1">{toast.message}</span>
+      {toast.action ? (
+        <button className="text-[var(--moon)] flex-1 text-left" onClick={() => { toast.action?.onClick(); onClose(); }}>
+          {toast.message}<span className="block mt-1 underline" style={{ color }}>{toast.action.label}</span>
+        </button>
+      ) : <span className="text-[var(--moon)] flex-1">{toast.message}</span>}
       <button onClick={onClose} className="text-[var(--moon-faint)] hover:text-[var(--moon)] transition-colors p-0.5">
         <X size={14} />
       </button>
