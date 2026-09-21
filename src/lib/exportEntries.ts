@@ -300,7 +300,7 @@ export async function exportToJson(entries: Entry[], folders: Folder[], tags: Ta
   const rows = sortRows(await buildRows(entries, folders, tags));
   const data = {
     app: 'FallVault',
-    version: '1.1.7',
+    version: '1.1.9',
     exportedAt: formatTime(new Date().toISOString()),
     count: rows.length,
     attachmentsDir: `${stripExt(syncBasename(savePath))}_attachments`,
