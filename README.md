@@ -221,3 +221,12 @@ MIT License © 2026 Fall
 ---
 
 Made with 💖 by Fall
+
+## 🔗 其它平台
+
+同一套 `.fvault` 加密备份格式，三端数据互通。
+
+| 平台 | 仓库 |
+|---|---|
+| iPhone / iPad | [FallVault-iOS](https://github.com/b3050605492-bot/FallVault-iOS) |
+| Android | [FallVault-Android](https://github.com/b3050605492-bot/FallVault-Android) |
