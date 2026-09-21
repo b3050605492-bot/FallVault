@@ -3,7 +3,7 @@
 // 备份密码通过 PBKDF2(15万次) 派生密钥 → 随机 data key 加密数据 → data key 抛加密存文件头
 import { writeFile } from '@tauri-apps/plugin-fs';
 import Database from '@tauri-apps/plugin-sql';
-import { getMasterKey, encryptField, decryptField, isEncryptedField } from './crypto';
+import { getMasterKey, encryptField, decryptField, isEncryptedField, metaGet, metaSet } from './crypto';
 import { getDbPath } from './dbPath';
 
 const PBKDF2_ITERATIONS = 150_000;
@@ -86,6 +86,10 @@ interface BackupData {
     tag_ids: number[];
     attachments?: { name: string; data_b64: string; size: number }[];
   }[];
+  // iOS 端专属数据（银行卡等）：桌面版没有对应界面，但必须原样保留并回传，
+  // 否则「iOS → PC 恢复 → PC 再备份 → iOS 恢复」这一圈会把卡片全丢掉。
+  bankCards?: unknown[];
+  iosExtras?: Record<string, unknown>;
 }
 
 export interface BackupResult {
@@ -176,6 +180,12 @@ export async function buildBackupContent(
     tags: tagRows.map((t) => ({ id: t.id, name: t.name, color: t.color || '#7DD3C0' })),
     entries,
   };
+
+  // iOS 透传数据原样带回（本机界面不展示，仅随备份往返）
+  const bankCardsRaw = await metaGet('ios_bank_cards');
+  if (bankCardsRaw) {
+    try { data.bankCards = JSON.parse(bankCardsRaw); } catch { /* 旧数据损坏则忽略 */ }
+  }
 
   // 整包加密：
   // 1. 生成随机 salt + 备份密码派生收件密钥
@@ -271,6 +281,12 @@ async function applyBackupContent(password: string, text: string): Promise<Resto
   const d = await Database.load(await getDbPath());
   const masterKey = getMasterKey();
   if (!masterKey) throw new Error('vault locked');
+
+  // iOS 透传数据：备份里带了就存下来（桌面版不显示卡片界面，但下次导出会原样回传，
+  // 保证 iOS → PC → iOS 往返不丢卡片）。备份里没有该字段时保持原样，不清空已有数据。
+  if (Array.isArray((data as BackupData).bankCards)) {
+    try { await metaSet('ios_bank_cards', JSON.stringify((data as BackupData).bankCards)); } catch { /* 忽略 */ }
+  }
 
   const enc = (v: string) => (v ? encryptField(masterKey as any, v) : '');
   const dec = async (v: string) => {

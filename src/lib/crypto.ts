@@ -109,13 +109,13 @@ export function isEncryptedField(value: string | null | undefined): boolean {
 }
 
 // ---- 元数据读写 ----
-async function metaGet(key: string): Promise<string | null> {
+export async function metaGet(key: string): Promise<string | null> {
   const d = await metaDb();
   const rows: any[] = await d.select('SELECT value FROM fly_meta WHERE key = ?', [key]);
   return rows[0]?.value ?? null;
 }
 
-async function metaSet(key: string, value: string): Promise<void> {
+export async function metaSet(key: string, value: string): Promise<void> {
   const d = await metaDb();
   await d.execute(
     'INSERT INTO fly_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
